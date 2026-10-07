@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 from sqlalchemy import Engine, text
 
+from app.idempotency import request_hash
 from tests.helpers import DEFAULT_LOAN, create_loan, error_code, new_key, pay
 
 
@@ -141,3 +142,31 @@ def test_key_reuse_is_detected_regardless_of_json_key_order(client: httpx.Client
     assert first.status_code == 201
     assert second.status_code == 201
     assert second.text == first.text
+
+
+def test_a_key_with_no_stored_response_is_reported_as_in_flight(
+    client: httpx.Client, engine: Engine
+) -> None:
+    """A defensive guard, exercised by writing the half finished row by hand.
+
+    The service itself cannot produce this state, because the key row only
+    becomes visible to other transactions once the response has been stored and
+    the transaction has committed. The guard exists so that a claimed key with
+    no response can never be served as an empty body.
+    """
+    key = new_key()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO idempotency_keys (id, key, endpoint, request_hash)
+                VALUES (gen_random_uuid(), :key, 'POST /loans', :request_hash)
+                """
+            ),
+            {"key": key, "request_hash": request_hash("POST /loans", DEFAULT_LOAN)},
+        )
+
+    response = client.post("/loans", json=DEFAULT_LOAN, headers={"Idempotency-Key": key})
+    assert response.status_code == 409
+    assert error_code(response) == "idempotency_request_in_flight"
+    assert _count(engine, "loans") == 0
