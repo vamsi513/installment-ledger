@@ -124,8 +124,9 @@ bash scripts/clean_export_check.sh
 
 ### What was measured
 
-The suite is 236 tests and passes in about 2.3 seconds. That number comes from
-the clean export run described above, on this machine and setup:
+The suite is 237 tests and passes in about 2.4 seconds. That number comes from
+the clean export run described above, against an empty database, on this
+machine and setup:
 
 * Apple M5 (`Mac17,2`), 10 cores, 16 GB RAM, macOS 26.6.2
 * Python 3.12.15 from Homebrew, in a fresh virtualenv
