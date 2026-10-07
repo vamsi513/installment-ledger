@@ -12,7 +12,7 @@ from .config import database_url
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    return create_engine(database_url(), pool_pre_ping=True)
+    return create_engine(database_url(), pool_pre_ping=True, pool_size=10, max_overflow=20)
 
 
 @lru_cache(maxsize=1)

@@ -17,6 +17,7 @@ from .services.payments import PaymentResult, outstanding_cents
 
 def installment_body(installment: Any) -> dict[str, Any]:
     return {
+        "id": str(installment.id),
         "sequence": installment.sequence,
         "due_date": installment.due_date.isoformat(),
         "amount_cents": installment.amount_cents,
