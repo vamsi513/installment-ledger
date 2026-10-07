@@ -1,4 +1,4 @@
-# Fully pinned lock. Generated with pip freeze from a clean Python 3.12 resolve.
+# Fully pinned lock, produced by pip freeze from a clean Python 3.12 resolve.
 # Direct dependencies: fastapi, uvicorn, sqlalchemy, psycopg[binary], alembic,
 # pydantic, pytest, httpx, ruff. Everything else below is a transitive pin.
 alembic==1.20.0
