@@ -185,7 +185,7 @@ def upgrade() -> None:
         sa.Column("endpoint", sa.Text(), nullable=False),
         sa.Column("request_hash", sa.Text(), nullable=False),
         sa.Column("response_status", sa.Integer(), nullable=True),
-        sa.Column("response_body", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("response_body", postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

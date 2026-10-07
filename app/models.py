@@ -27,7 +27,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .schedule import Cadence
@@ -175,5 +175,5 @@ class IdempotencyKey(Base):
     endpoint: Mapped[str] = mapped_column(Text)
     request_hash: Mapped[str] = mapped_column(Text)
     response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    response_body: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
