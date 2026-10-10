@@ -204,3 +204,111 @@ def test_concurrent_payments_on_separate_loans_do_not_block_each_other(
         state = client.get(f"/loans/{loan['id']}").json()
         assert state["paid_cents"] == 30_000
         assert state["outstanding_cents"] == 90_000
+
+
+# A heavier mix than the tests above: many payments at once, where a third of the
+# threads deliberately reuse one idempotency key. The point is to assert every
+# invariant at once afterwards rather than one per test, because the failure mode
+# worth catching is a combination that each individual check would miss.
+HEAVY_THREAD_COUNT = 24
+
+
+def test_a_storm_of_payments_and_duplicate_keys_keeps_every_invariant(
+    client: httpx.Client, base_url: str, engine: Engine
+) -> None:
+    principal = 240_000
+    loan = create_loan(client, principal_cents=principal, installment_count=6)
+    loan_id = loan["id"]
+    total_payable = loan["total_cents"]
+
+    # Eight threads share one key, so at most one of their payments may land. The
+    # other sixteen are distinct and should all land.
+    shared_key = new_key()
+    unique_threads = 16
+    amount = 1_000
+
+    def send(http: httpx.Client, index: int) -> httpx.Response:
+        key = shared_key if index >= unique_threads else new_key()
+        return http.post(
+            f"/loans/{loan_id}/payments",
+            json={"amount_cents": amount},
+            headers={"Idempotency-Key": key},
+        )
+
+    responses = _run_in_parallel(base_url, send, count=HEAVY_THREAD_COUNT)
+    accepted = [r for r in responses if r.status_code in (200, 201)]
+    assert len(accepted) == HEAVY_THREAD_COUNT, [r.status_code for r in responses]
+
+    # The shared key must have produced exactly one payment row, however many
+    # threads used it.
+    with engine.connect() as connection:
+        payment_rows = int(connection.execute(text("SELECT COUNT(*) FROM payments")).scalar_one())
+    expected_payments = unique_threads + 1
+    assert payment_rows == expected_payments, "a duplicate key created an extra payment"
+
+    state = client.get(f"/loans/{loan_id}").json()
+
+    # 1. Money applied matches exactly the payments that were allowed to exist.
+    expected_paid = expected_payments * amount
+    assert state["paid_cents"] == expected_paid
+
+    # 2. Outstanding never goes negative and always complements what was paid.
+    assert state["outstanding_cents"] >= 0
+    assert state["outstanding_cents"] == total_payable - expected_paid
+
+    # 3. Installments still sum to the total payable, unchanged by any payment.
+    assert sum(i["amount_cents"] for i in state["installments"]) == total_payable
+
+    # 4. No installment is over applied or negative.
+    for installment in state["installments"]:
+        assert 0 <= installment["paid_cents"] <= installment["amount_cents"]
+
+    # 5. Applied amounts across installments equal the money taken in.
+    assert sum(i["paid_cents"] for i in state["installments"]) == expected_paid
+
+    # 6. The double entry ledger still balances. Entries carry a direction and a
+    # single amount, so debits and credits are summed conditionally.
+    with engine.connect() as connection:
+        debits, credits = connection.execute(
+            text(
+                "SELECT "
+                "COALESCE(SUM(amount_cents) FILTER (WHERE direction = 'debit'), 0), "
+                "COALESCE(SUM(amount_cents) FILTER (WHERE direction = 'credit'), 0) "
+                "FROM ledger_entries"
+            )
+        ).one()
+    assert int(debits) == int(credits), "the ledger stopped balancing under contention"
+    assert int(debits) > 0, "no ledger entries were written at all"
+
+
+def test_the_same_key_under_contention_returns_one_payment_id(
+    client: httpx.Client, base_url: str, engine: Engine
+) -> None:
+    """Every caller that reuses a key must be told about the same payment, not just
+    be refused. A retry that gets a different id would let a caller double count."""
+    loan = create_loan(client, principal_cents=50_000, installment_count=2)
+    loan_id = loan["id"]
+    key = new_key()
+
+    def send(http: httpx.Client, _index: int) -> httpx.Response:
+        return http.post(
+            f"/loans/{loan_id}/payments",
+            json={"amount_cents": 2_500},
+            headers={"Idempotency-Key": key},
+        )
+
+    responses = _run_in_parallel(base_url, send, count=HEAVY_THREAD_COUNT)
+    successes = [r for r in responses if r.status_code in (200, 201)]
+    conflicts = [r for r in responses if r.status_code not in (200, 201)]
+
+    assert successes, "no caller got a usable answer"
+    ids = {r.json()["id"] for r in successes}
+    assert len(ids) == 1, f"one key produced {len(ids)} payment ids"
+
+    # Anything not served the stored result must be a documented conflict, never a
+    # 500. A crash here would be the thing that embarrasses a demo.
+    for response in conflicts:
+        assert response.status_code < 500, response.text
+        assert error_code(response)
+
+    assert _count(engine, "payments") == 1

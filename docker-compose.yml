@@ -1,3 +1,9 @@
+# Postgres plus the API. `docker compose up` gives a working service on :8000
+# with the schema already migrated.
+#
+# Postgres is published on 5433 rather than 5432 so it does not collide with a
+# Postgres already installed on the host, which is also the port the default
+# DATABASE_URL in app/config.py points at when running outside Docker.
 services:
   postgres:
     image: postgres:18.6
@@ -12,3 +18,20 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside the compose network Postgres answers on its own name and the
+      # container port, not the published one.
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@postgres:5432/ledger
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=3).status==200 else 1)\""]
+      interval: 3s
+      timeout: 5s
+      retries: 20

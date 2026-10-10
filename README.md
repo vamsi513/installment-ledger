@@ -9,6 +9,89 @@ when two payments land at the same moment.
 The point of the project is correctness under retries and concurrency, not
 breadth of features.
 
+## Schema
+
+```mermaid
+erDiagram
+    loans ||--o{ installments : "has"
+    loans ||--o{ payments : "receives"
+    loans ||--o{ ledger_entries : "records"
+    payments ||--|{ ledger_entries : "writes a balanced pair"
+
+    loans {
+        uuid id PK
+        bigint principal_cents
+        int apr_bps
+        int installment_count
+        text cadence
+        date start_date
+        int term_days
+        bigint interest_cents
+        bigint total_cents
+        text status
+    }
+    installments {
+        uuid id PK
+        uuid loan_id FK
+        int sequence
+        date due_date
+        bigint amount_cents
+        bigint paid_cents
+    }
+    payments {
+        uuid id PK
+        uuid loan_id FK
+        bigint amount_cents
+        uuid transaction_id
+    }
+    ledger_entries {
+        uuid id PK
+        uuid transaction_id
+        uuid loan_id FK
+        text account
+        text direction
+        bigint amount_cents
+    }
+    idempotency_keys {
+        uuid id PK
+        text key
+        text endpoint
+        text request_hash
+        int response_status
+        json response_body
+    }
+```
+
+## Invariants, and where each one is enforced
+
+The distinction matters: anything enforced only in application code can be
+bypassed by a bad migration, a script, or a second service writing to the same
+database. Anything enforced in the database cannot.
+
+| Invariant | Enforced by | Where |
+|---|---|---|
+| Installments sum exactly to the total payable | application | `app/schedule.py::distribute_cents`, asserted as a property over the whole reachable input space in `tests/test_schedule_properties.py` |
+| Every transaction's debits equal its credits | **database trigger** | `migrations/versions/0001_initial_schema.py`, so it holds even for a write that bypasses this service |
+| Amounts are integer cents, never float | **database column type** plus application | `bigint` columns, strict integer schemas in `app/schemas.py` |
+| One idempotency key yields at most one effect | **database unique index** | unique index on `idempotency_keys`, so two concurrent inserts cannot both win |
+| A payment never exceeds the outstanding balance | application, under a row lock | `app/services/payments.py`, with `SELECT ... FOR UPDATE` on the loan |
+| Two concurrent payments cannot interleave on one loan | **database row lock** | `SELECT ... FOR UPDATE`, verified in `tests/test_concurrency.py` with real threads |
+| No installment is paid beyond its amount, or below zero | application | `app/services/payments.py`, asserted after a 24 thread storm in `tests/test_concurrency.py` |
+
+## What idempotency does and does not guarantee
+
+**It does:** a repeated request with the same `Idempotency-Key` on the same
+endpoint returns the stored result instead of performing the action again. The
+key is held in a unique index, so two threads arriving at once cannot both
+insert; one wins and the other is served the stored response. This is verified
+under contention with 24 threads sharing one key.
+
+**It does not:** make the operation safe to replay with a *different* body. The
+request body is hashed and stored alongside the key, so reusing a key with a
+changed body is rejected rather than silently returning the old result. It also
+does not expire. Keys are kept forever, with no cleanup job, so a long lived
+deployment would need one.
+
 ## Design choices
 
 **Money is integer cents.** Every stored amount and every amount on the wire is
@@ -84,10 +167,32 @@ is paid the loan moves to `closed` and refuses further payments.
 
 ## Running locally
 
-You need Docker and Python 3.12.
+### One command
 
 ```bash
-docker compose up -d
+docker compose up -d --build
+bash scripts/demo.sh
+```
+
+That builds the API image, starts Postgres 18.6, runs the migration and serves
+on `http://127.0.0.1:8000`. No `.env` and no secrets are involved.
+
+`scripts/demo.sh` then walks the whole API and prints what came back: it creates
+a loan, checks the installments sum exactly to the total, takes a payment,
+retries with the same idempotency key to show the stored result returning rather
+than a second payment, fires eight concurrent payments, re-checks every
+invariant, and finishes by having an overpayment refused with a stable error
+code.
+
+Interactive API docs are at `http://127.0.0.1:8000/docs`, and the raw schema at
+`/openapi.json`.
+
+### Without Docker for the application
+
+You need Docker for Postgres and Python 3.12.
+
+```bash
+docker compose up -d postgres
 ```
 
 That starts Postgres 18.6 and publishes it on port 5433, which is the port the
@@ -122,9 +227,27 @@ virtualenv with the pinned dependencies:
 bash scripts/clean_export_check.sh
 ```
 
+### What the suite covers
+
+256 tests. Alongside the example based tests:
+
+* **17 property based tests** (`tests/test_schedule_properties.py`, Hypothesis)
+  assert the schedule invariants across the whole reachable input space rather
+  than at chosen points: that installments always sum to the total, that no two
+  differ by more than a cent, that the remainder always goes to the earliest
+  installments, that interest is monotonic in term length, and that a loan
+  starting on the 31st never produces a 31st of February.
+* **8 concurrency tests** (`tests/test_concurrency.py`) run real OS threads
+  against real Postgres through real HTTP, lined up on a barrier so they contend
+  on purpose. The heaviest fires 24 simultaneous payments where a third share one
+  idempotency key, then asserts all six invariants at once: exactly one payment
+  per shared key, money applied matching the payments allowed to exist,
+  outstanding never negative, installments still summing to the total, no
+  installment over applied, and the ledger still balancing.
+
 ### What was measured
 
-The suite is 237 tests and passes in about 2.4 seconds. That number comes from
+The suite is 256 tests and passes in about 10 seconds. That number comes from
 the clean export run described above, against an empty database, on this
 machine and setup:
 
@@ -134,8 +257,10 @@ machine and setup:
   pytest 9.1.1
 * Postgres 18.6 in Docker 29.7.2, running locally on the same machine
 
-The concurrency tests use 8 threads. No throughput or latency benchmark was
-run, so this README makes no claim about either.
+The concurrency tests use 8 threads, and the heaviest uses 24. **No throughput
+or latency benchmark was run, so this README makes no claim about either.**
+The timing above is how long the test suite takes, which is not a measure of
+how fast the service is.
 
 ## Endpoints
 
@@ -187,5 +312,8 @@ create a second loan.
   response can be a moment behind a payment that is committing concurrently.
 * No pagination on the ledger endpoint, so a loan with a very large number of
   payments returns a very large body.
-* No rate limiting, no metrics, no structured logging and no tracing.
+* No rate limiting, no metrics and no tracing. There is structured logging:
+  one JSON line per request on stdout with a request id, taken from an inbound
+  `X-Request-ID` when present and generated otherwise, and echoed back on the
+  response.
 * Idempotency keys are kept forever. There is no expiry and no cleanup job.
