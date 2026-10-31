@@ -25,7 +25,18 @@ _AMOUNT_PATTERNS = (
     ),
 )
 
-_PAYMENT_WORDS = ("pay", "payment", "settle", "put down", "send", "transfer", "charge")
+_PAYMENT_WORDS = (
+    "pay",
+    "payment",
+    "settle",
+    "put",
+    "towards",
+    "toward",
+    "apply",
+    "send",
+    "transfer",
+    "charge",
+)
 _READ_WORDS = (
     "balance",
     "owe",

@@ -1,0 +1,84 @@
+# The assistant is optional, so it gets its own workflow rather than extra
+# steps in ci.yml. The ledger's own job stays exactly as fast as it was, and a
+# failure here cannot be mistaken for a failure in the ledger.
+#
+# The real model evaluation is deliberately not run here. It costs money, it
+# needs a key, and a non deterministic check is not something to gate a merge
+# on. Run it locally: see the README.
+name: assistant-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  assistant:
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: ledger
+          POSTGRES_PASSWORD: ledger
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledger -d ledger"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    env:
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@localhost:5432/ledger
+      # The offline and integration suites use the fake model client, so no key
+      # is needed and no model is called.
+      ASSISTANT_LLM: fake
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12.15"
+
+      - name: Install pinned dependencies
+        run: pip install --no-cache-dir -r requirements.txt -r requirements-assistant.txt
+
+      - name: Lint
+        run: |
+          ruff --version
+          ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Type check the assistant package
+        run: |
+          mypy --version
+          mypy
+
+      - name: Migrate
+        run: alembic upgrade head
+
+      - name: Unit tests, no LLM and no network
+        run: pytest tests/assistant/unit
+
+      - name: Integration tests, real Postgres and real MCP subprocess
+        run: pytest tests/assistant/integration
+
+      - name: Verify the eval harness against the fake provider
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --log-level warning &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/health > /dev/null && break
+            sleep 0.5
+          done
+          LEDGER_BASE_URL=http://127.0.0.1:8000 \
+            python -m assistant.eval.run_eval --provider fake --out-dir "$RUNNER_TEMP/eval"
+
+      - name: Confirm the ledger suite is untouched by the assistant
+        # The assistant must not change how the ledger behaves, so the existing
+        # tests are run again here with the assistant's dependencies installed.
+        run: pytest --ignore=tests/assistant
