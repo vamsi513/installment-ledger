@@ -44,7 +44,15 @@ jobs:
           python-version: "3.12.15"
 
       - name: Install pinned dependencies
-        run: pip install --no-cache-dir -r requirements.txt -r requirements-assistant.txt
+        # Two commands, not one. requirements-assistant.txt pins certifi forward,
+        # because langchain-core needs a newer one than the ledger pins, and
+        # handing pip both files at once makes it see two exact pins for the same
+        # package and refuse with ResolutionImpossible. Installing the base first
+        # and the extra second lets the second upgrade the one package it has to.
+        run: |
+          pip install --no-cache-dir -r requirements.txt
+          pip install --no-cache-dir -r requirements-assistant.txt
+          pip check
 
       - name: Lint
         run: |

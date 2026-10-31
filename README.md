@@ -454,15 +454,22 @@ nothing waiting. That is the intended trade.
 The assistant needs its own dependencies. The ledger does not.
 
 ```bash
-pip install -r requirements.txt -r requirements-assistant.txt
+pip install -r requirements.txt
+pip install -r requirements-assistant.txt
 ```
+
+Two commands rather than one. `requirements-assistant.txt` pins `certifi`
+forward, and handing pip both files in a single command makes it see two exact
+pins for the same package and refuse with `ResolutionImpossible`. Installing the
+base first and the extra second lets the second upgrade the one package it has
+to.
 
 `pyproject.toml` declares the same direct dependencies under an `assistant`
 extra, so `pip install -e ".[assistant]"` works too.
 `requirements-assistant.txt` is the full transitive lock and is what CI installs.
-It records the one pin this pulls forward: `langchain-core` requires
-`certifi>=2026.10.19`, so installing the assistant moves `certifi` past the
-version in `requirements.txt`. `requirements.txt` itself is unchanged.
+The pin it pulls forward is `certifi`: `langchain-core` requires
+`certifi>=2026.10.19`, which is newer than the version `requirements.txt` pins.
+`requirements.txt` itself is unchanged.
 
 Copy `.env.example` to `.env` and fill it in. `OPENAI_API_KEY` is read from the
 environment and from nowhere else. It is never logged and never returned in a
