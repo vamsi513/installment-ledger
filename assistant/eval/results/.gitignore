@@ -1,0 +1,21 @@
+# Results land here. Only a real model run is tracked.
+#
+# run_eval.py writes two files per run, named from the provider and a UTC
+# timestamp:
+#
+#     eval-<provider>-%Y%m%dT%H%M%SZ.json
+#     eval-<provider>-%Y%m%dT%H%M%SZ.md
+#
+# where <provider> is exactly "openai" or "fake". The negations below spell out
+# that timestamp shape, so they match a results file and nothing else.
+#
+# A fake provider run stays untracked on purpose. It measures the harness, not a
+# model, and a file in the repository that reads like a score nobody can trace
+# to a model is worse than no file.
+#
+# Only this directory is covered. A run pointed somewhere else with --out-dir is
+# not governed by this file.
+*
+!.gitignore
+!eval-openai-????????T??????Z.json
+!eval-openai-????????T??????Z.md
