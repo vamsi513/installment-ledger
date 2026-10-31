@@ -1,0 +1,4 @@
+# Results are produced by a run, never committed. A results file in the
+# repository would be a number nobody can trace back to a run they did.
+*
+!.gitignore
