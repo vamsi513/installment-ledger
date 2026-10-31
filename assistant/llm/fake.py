@@ -13,12 +13,16 @@ import re
 
 from .base import LlmReply, Message
 
+_SIGN = r"(?P<sign>-|\u2212|minus\s+|negative\s+)?"
 _AMOUNT_PATTERNS = (
-    # "12345 cents", "12345c"
-    re.compile(r"(?P<cents>\d[\d,_]*)\s*(?:cents|cent|c)\b", re.IGNORECASE),
-    # "$123.45", "123.45 dollars"
-    re.compile(r"\$\s*(?P<whole>\d[\d,_]*)(?:\.(?P<frac>\d{1,2}))?"),
-    re.compile(r"(?P<whole>\d[\d,_]*)(?:\.(?P<frac>\d{1,2}))?\s*(?:dollars|usd|bucks)\b", re.I),
+    # "12345 cents", "-500 cents"
+    re.compile(_SIGN + r"(?P<cents>\d[\d,_]*)\s*(?:cents|cent|c)\b", re.IGNORECASE),
+    # "$123.45", "-$5"
+    re.compile(_SIGN + r"\$\s*(?P<whole>\d[\d,_]*)(?:\.(?P<frac>\d{1,2}))?"),
+    re.compile(
+        _SIGN + r"(?P<whole>\d[\d,_]*)(?:\.(?P<frac>\d{1,2}))?\s*(?:dollars|usd|bucks)\b",
+        re.IGNORECASE,
+    ),
 )
 
 _PAYMENT_WORDS = ("pay", "payment", "settle", "put down", "send", "transfer", "charge")
@@ -56,11 +60,12 @@ def extract_amount_cents(text: str) -> int | None:
         if not match:
             continue
         groups = match.groupdict()
+        sign = -1 if groups.get("sign") else 1
         if groups.get("cents") is not None:
-            return int(_digits(groups["cents"]))
+            return sign * int(_digits(groups["cents"]))
         whole = int(_digits(groups["whole"]))
         frac = groups.get("frac") or "0"
-        return whole * 100 + int(frac.ljust(2, "0"))
+        return sign * (whole * 100 + int(frac.ljust(2, "0")))
     return None
 
 

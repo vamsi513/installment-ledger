@@ -51,15 +51,16 @@ def mount_assistant(ledger_app: FastAPI, *, settings: Settings | None = None) ->
         ):
             yield
 
+    # The outer app serves no documents of its own, so /openapi.json, /docs and
+    # /redoc fall through to the ledger app and stay exactly what they were.
+    # The assistant's own document is at /assistant/openapi.json.
     outer = FastAPI(
         title="installment-ledger with assistant",
         version="0.1.0",
-        summary="The loan and payments API, plus an optional conversational layer.",
-        description=(
-            "Everything under `/assistant` is the conversational layer. Every other "
-            "path is the ledger API, served by the unmodified ledger application."
-        ),
         lifespan=lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
     )
     # Order matters: the more specific mount has to be tried first, because a
     # mounted app that answers 404 ends the match rather than falling through.

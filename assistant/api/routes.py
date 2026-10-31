@@ -40,15 +40,44 @@ WS_CLOSE_TRY_AGAIN_LATER = 1013
 WS_CLOSE_BAD_REQUEST = 1003
 STREAM_CHUNK_WORDS = 6
 
-_connection_slots: dict[int, asyncio.Semaphore] = {}
+
+class ConnectionLimiter:
+    """A counter with a non blocking acquire.
+
+    A semaphore would make the connection past the cap wait for a slot. This
+    refuses it instead, which is the behaviour a client can act on.
+    """
+
+    def __init__(self, cap: int) -> None:
+        self._cap = max(1, cap)
+        self._active = 0
+        self._lock = asyncio.Lock()
+
+    async def try_acquire(self) -> bool:
+        async with self._lock:
+            if self._active >= self._cap:
+                return False
+            self._active += 1
+            return True
+
+    async def release(self) -> None:
+        async with self._lock:
+            self._active = max(0, self._active - 1)
+
+    @property
+    def active(self) -> int:
+        return self._active
 
 
-def _slots(settings: Settings) -> asyncio.Semaphore:
-    """One semaphore per cap value, created lazily inside the running loop."""
+_limiters: dict[int, ConnectionLimiter] = {}
+
+
+def _limiter(settings: Settings) -> ConnectionLimiter:
+    """One limiter per cap value, created lazily inside the running loop."""
     cap = max(1, settings.ws_max_connections)
-    if cap not in _connection_slots:
-        _connection_slots[cap] = asyncio.Semaphore(cap)
-    return _connection_slots[cap]
+    if cap not in _limiters:
+        _limiters[cap] = ConnectionLimiter(cap)
+    return _limiters[cap]
 
 
 def _store(settings: Settings) -> SessionLoanStore:
@@ -143,14 +172,14 @@ def _chunk(text: str, words_per_chunk: int = STREAM_CHUNK_WORDS) -> list[str]:
 @router.websocket("/ws")
 async def assistant_socket(socket: WebSocket) -> None:
     settings = get_settings()
-    slots = _slots(settings)
+    limiter = _limiter(settings)
 
-    if slots.locked():
-        # Refused before the handshake completes, so a flood cannot hold sockets.
-        await socket.close(code=WS_CLOSE_TRY_AGAIN_LATER, reason="connection_limit_reached")
+    if not await limiter.try_acquire():
+        # Accepted only to say why, then closed straight away.
+        await socket.accept()
+        await _reject(socket, WS_CLOSE_TRY_AGAIN_LATER, "connection_limit_reached")
         return
 
-    await slots.acquire()
     try:
         await socket.accept()
 
@@ -219,7 +248,7 @@ async def assistant_socket(socket: WebSocket) -> None:
     except WebSocketDisconnect:
         return
     finally:
-        slots.release()
+        await limiter.release()
 
 
 def build_assistant_app() -> FastAPI:
