@@ -94,10 +94,12 @@ OUT_OF_SCOPE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "other_customers",
         re.compile(
-            r"\b(other|another|someone else'?s?|somebody else'?s?|everyone'?s?|all)\s+"
-            r"(customers?|borrowers?|users?|accounts?|clients?|people'?s?)\b"
+            r"\b(other|another|someone\s+else'?s?|somebody\s+else'?s?|everyone'?s?"
+            r"|everybody'?s?|all)\s+"
+            r"(customers?|borrowers?|users?|accounts?|clients?|people'?s?"
+            r"|balances?|loans?|payments?|schedules?|details?|info(rmation)?)\b"
             r"|\b(customers?|borrowers?|accounts?)\s+(list|database|table)\b"
-            r"|\ball\s+loans\b|\bevery\s+loan\b|\bother\s+loans?\b",
+            r"|\ball\s+loans\b|\bevery\s+loan\b",
             re.IGNORECASE,
         ),
     ),
