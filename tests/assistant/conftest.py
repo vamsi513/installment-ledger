@@ -5,10 +5,22 @@ needs no LLM either, because it runs the fake model client, but it does use a
 real Postgres, a real ledger over loopback HTTP and a real MCP subprocess.
 
 The ledger fixtures come from ``tests/conftest.py`` unchanged.
+
+These tests need the optional ``assistant`` extra. The ledger's own CI job
+installs ``requirements.txt`` alone and then runs plain ``pytest``, which reaches
+this directory because ``testpaths`` is ``tests``. Without the guard below, that
+job dies during collection on ``ModuleNotFoundError``, which is a failure of the
+ledger's build caused by an optional package it does not use.
+
+The guard has to stop collection rather than mark tests skipped, because the
+import that fails happens while the module is being imported, before there is a
+test item to attach a skip to. ``pytest_report_collectionfinish`` prints the
+reason so a run that quietly collects nothing here still says why.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import socket
 import threading
 import time
@@ -24,6 +36,38 @@ from assistant.config import Settings
 
 SERVER_START_TIMEOUT_SECONDS = 30
 TEST_WS_TOKEN = "assistant-test-token"
+
+# Imported at module import time by the tests, or by the assistant modules they
+# import. Not the whole extra: ``openai`` is reached lazily inside a function and
+# never by a test, so its absence does not stop anything being collected.
+REQUIRED_MODULES = ("langgraph", "mcp", "websockets")
+
+
+def _missing_modules() -> tuple[str, ...]:
+    return tuple(name for name in REQUIRED_MODULES if importlib.util.find_spec(name) is None)
+
+
+MISSING_MODULES = _missing_modules()
+
+SKIP_REASON = (
+    "assistant tests not collected: the assistant extra is not installed "
+    f"(missing {', '.join(MISSING_MODULES) or 'nothing'}). "
+    "Install it with: pip install -r requirements-assistant.txt"
+)
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """Keep this directory out of collection when the extra is absent."""
+    if MISSING_MODULES:
+        return True
+    return None
+
+
+def pytest_report_collectionfinish(config: pytest.Config, items: list[pytest.Item]) -> list[str]:
+    """Say so, rather than letting the directory vanish without comment."""
+    if MISSING_MODULES:
+        return [SKIP_REASON]
+    return []
 
 
 @pytest.fixture
