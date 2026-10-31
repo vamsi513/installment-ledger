@@ -7,6 +7,7 @@ session at all, which is also the point: the guards are reachable without MCP.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,6 +42,32 @@ class GarbageLlm:
 
     async def complete(self, messages: list[Message], *, max_output_tokens: int = 256) -> LlmReply:
         return LlmReply(text="I think they want to pay", prompt_tokens=3, completion_tokens=5)
+
+
+class FixedExtractionLlm:
+    """A model client whose extracted amount the test dictates.
+
+    Lets the refusal reason be checked independently of what any real model
+    happens to return for a given phrasing.
+    """
+
+    name = "fixed-extraction"
+
+    def __init__(self, amount_cents: int | None) -> None:
+        self.amount_cents = amount_cents
+
+    async def complete(self, messages: list[Message], *, max_output_tokens: int = 256) -> LlmReply:
+        return LlmReply(
+            text=json.dumps(
+                {
+                    "intent": "payment_request",
+                    "amount_cents": self.amount_cents,
+                    "wants_ledger": False,
+                }
+            ),
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
 
 
 @pytest.fixture
@@ -102,6 +129,68 @@ async def test_a_non_positive_amount_is_refused_before_any_tool_runs(
     assert result["intent"] == Intent.REFUSED.value
     assert result["refusal_code"] == "invalid_amount"
     assert route_after_classify(cast(Any, result)) == "respond"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "extracted"),
+    [
+        ("Pay -5 dollars.", None),
+        ("Pay -5 dollars.", -500),
+        ("Pay minus 300 cents.", None),
+        ("Pay minus 300 cents.", -300),
+    ],
+)
+async def test_a_negative_amount_is_invalid_whatever_extraction_returned(
+    settings: Settings, message: str, extracted: int | None
+) -> None:
+    """The reason must not depend on whether the model read the amount.
+
+    A model that declines to read "-5 dollars" as an amount returns nothing,
+    which on its own looks like a missing amount. The message says otherwise, so
+    the message decides.
+    """
+    result = await classify(settings, message, llm=FixedExtractionLlm(extracted))
+
+    assert result["intent"] == Intent.REFUSED.value
+    assert result["refusal_code"] == "invalid_amount"
+    assert result["tool_calls"] == []
+    assert route_after_classify(cast(Any, result)) == "respond"
+
+
+@pytest.mark.anyio
+async def test_a_missing_amount_is_still_reported_as_missing(settings: Settings) -> None:
+    """The negative check must not swallow the genuinely missing case."""
+    result = await classify(
+        settings, "I would like to make a payment.", llm=FixedExtractionLlm(None)
+    )
+    assert result["refusal_code"] == "amount_missing"
+
+
+@pytest.mark.anyio
+async def test_a_negative_token_takes_precedence_over_the_cap(settings: Settings) -> None:
+    """The one narrowing from checking the message first.
+
+    A message carrying both a negative token and an amount over the cap reports
+    invalid_amount rather than amount_above_cap. Both refuse and neither writes,
+    so this records the behaviour rather than endorsing the reason as the better
+    of the two.
+    """
+    over_cap = settings.max_payment_cents + 1
+    result = await classify(
+        settings, "Pay -5 dollars, or failing that the lot.", llm=FixedExtractionLlm(over_cap)
+    )
+    assert result["refusal_code"] == "invalid_amount"
+    assert result["tool_calls"] == []
+
+
+@pytest.mark.anyio
+async def test_an_over_cap_amount_with_no_negative_token_still_reports_the_cap(
+    settings: Settings,
+) -> None:
+    over_cap = settings.max_payment_cents + 1
+    result = await classify(settings, "Pay the lot.", llm=FixedExtractionLlm(over_cap))
+    assert result["refusal_code"] == "amount_above_cap"
 
 
 @pytest.mark.anyio

@@ -199,13 +199,25 @@ async def classify_node(state: AgentState) -> dict[str, Any]:
         }
 
     if parsed["intent"] == Intent.PAYMENT_REQUEST.value:
-        amount_refusal = check_amount(
-            parsed["amount_cents"], max_payment_cents=context.settings.max_payment_cents
-        )
-        if amount_refusal is None and mentions_negative_amount(text):
-            # The message wrote the amount as negative even though a positive
-            # number came back from extraction. Trust the text.
+        amount_refusal: str | None
+        if mentions_negative_amount(text):
+            # Read from the message rather than from the extracted number, so
+            # this holds whether extraction returned a negative number, a
+            # positive one, or nothing at all. Checking it second would switch
+            # it off in the case extraction is most likely to fail on: a model
+            # that sensibly declines to read "-5 dollars" as an amount leaves
+            # nothing for the amount check to reject, and the refusal would
+            # then read as a missing amount rather than an invalid one.
+            #
+            # One narrowing comes with the order: a message carrying both a
+            # negative token and an amount over the cap now reports
+            # invalid_amount rather than amount_above_cap. Both refuse and
+            # neither writes.
             amount_refusal = "invalid_amount"
+        else:
+            amount_refusal = check_amount(
+                parsed["amount_cents"], max_payment_cents=context.settings.max_payment_cents
+            )
         if amount_refusal is not None:
             return {
                 **updates,
