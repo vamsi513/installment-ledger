@@ -435,10 +435,17 @@ code is a rule.
 | The user never sees a number the ledger did not return | Code, `agent/replies.py` templates |
 | A timed out write is reported as unknown, not as success or failure | Code, `respond` node |
 | Loan ids reach the logs as four characters | Code, `assistant/redaction.py` |
+| A held payment is refused before the ledger is contacted | Code, `confirm_payment` checks the status first |
+| The agent cannot approve its own held payment | Code, no approving tool is exposed over MCP |
+| An approval and a confirmation are separate decisions | Code, approval only makes an action confirmable |
 | A payment happens at most once per pending action | The ledger's unique index on the idempotency key |
+| An audit entry cannot be changed or removed | The database, triggers on `review_audit_log` |
 | Payments cannot overpay under concurrency | The ledger's row lock, unchanged |
 | Treat the user's text as data rather than instructions | Prompt only |
 | Return strictly the requested JSON shape | Prompt, with a strict parser in code behind it that refuses anything else |
+
+The three review rows apply only when the review queue is on, which it is not
+by default. See the section below for what that feature is and is not.
 
 Only the last two are prompt level, and both have something in code behind
 them. The model cannot widen its own remit by answering differently: a label
@@ -448,6 +455,142 @@ unparseable answer is treated as a failure rather than a guess.
 Worth being clear about the one thing the deterministic confirmation check costs:
 a user who types "yeah go for it" has not confirmed, and will be told there is
 nothing waiting. That is the intended trade.
+
+### Review queue for risky payments
+
+Off unless `ASSISTANT_REVIEW_ENABLED` says otherwise. With it off nothing below
+runs, every prepared payment is `ready`, and the assistant behaves exactly as
+the section above describes. That is the default, and it is why the 56 scenario
+results in this README are unaffected by any of it.
+
+With it on, a prepared payment the policy considers risky is held instead of
+being offered for confirmation, `confirm_payment` refuses it until a reviewer
+approves, and every status change goes to an append only audit log.
+
+**What holds a payment.** Two rules, each switched off by setting it to zero:
+
+| Rule | Setting | Default |
+| --- | --- | --- |
+| Amount above a threshold | `ASSISTANT_REVIEW_THRESHOLD_CENTS` | 25000 |
+| More than N prepares on one loan inside a window | `ASSISTANT_REVIEW_MAX_PREPARES` | 3 |
+| The window those prepares are counted over | `ASSISTANT_REVIEW_WINDOW_SECONDS` | 3600 |
+
+Those numbers are examples picked to be easy to reason about in a demo. They are
+not advice about where a real limit belongs.
+
+**What a held payment does.** `prepare_payment` still writes nothing to the
+ledger, and still returns a `pending_action_id`, but the action is created as
+`needs_review` and the reply tells the borrower a reviewer has to look at it
+rather than asking for a yes. If they say yes anyway, `confirm_payment` is
+called, checks the status before it touches the ledger, and refuses. The
+payments endpoint is never reached.
+
+**Approval does not pay anything.** A reviewer approving an action only makes it
+confirmable. The borrower still has to confirm it, and that confirmation is
+still an exact phrase match. Approving and confirming are two different
+decisions by two different people.
+
+**At most once is unchanged.** The idempotency key is derived from the pending
+action id, and approving an action does not change that id. So approving twice,
+confirming twice, or an approval arriving at the same moment as a confirmation
+all end with one payment in the ledger. Those three races have tests.
+
+**The agent cannot approve.** There is deliberately no MCP tool for it. Approval
+exists only on the reviewer command line and the reviewer endpoints, so nothing
+the model does or is told to do can clear a hold.
+
+#### The reviewer interfaces
+
+On the command line:
+
+```bash
+export ASSISTANT_REVIEW_ENABLED=1
+export ASSISTANT_REVIEWER_ID="your name here"
+
+python -m assistant.review list
+python -m assistant.review approve <pending_action_id> --reason "spoke to the borrower"
+python -m assistant.review reject  <pending_action_id> --reason "borrower did not ask"
+python -m assistant.review audit   <pending_action_id>
+```
+
+Over HTTP, with `assistant.asgi:app` running:
+
+```bash
+export ASSISTANT_REVIEW_TOKEN="a shared secret"
+
+curl -H "X-Review-Token: $ASSISTANT_REVIEW_TOKEN" \
+  http://127.0.0.1:8000/assistant/review/held
+
+curl -X POST -H "X-Review-Token: $ASSISTANT_REVIEW_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"reason":"spoke to the borrower"}' \
+  http://127.0.0.1:8000/assistant/review/<pending_action_id>/approve
+
+curl -X POST -H "X-Review-Token: $ASSISTANT_REVIEW_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"reason":"borrower did not ask"}' \
+  http://127.0.0.1:8000/assistant/review/<pending_action_id>/reject
+
+curl -H "X-Review-Token: $ASSISTANT_REVIEW_TOKEN" \
+  http://127.0.0.1:8000/assistant/review/<pending_action_id>/audit
+```
+
+A rejection must carry a reason. An approval may. With
+`ASSISTANT_REVIEW_TOKEN` unset the endpoints refuse every request, which is the
+same default the streaming socket takes.
+
+#### The audit log
+
+One row per state change, carrying the actor, what happened, when, the status
+before, the status after and the reason. It lives in a SQLite file beside the
+state database, with `-audit` appended to the path.
+
+Append only, and not by convention: triggers on the table reject an `UPDATE` or
+a `DELETE`, in the same spirit as the ledger's balance trigger. A bug in this
+package cannot quietly rewrite history. There is a test for each of five
+tampering attempts.
+
+A trail for one payment that was held, approved and paid reads:
+
+```
+prepared         -> needs_review   amount_above_threshold      actor: assistant
+held_for_review     needs_review   amount_above_threshold      actor: assistant
+approved         needs_review -> approved   spoke to the borrower   actor: <reviewer>
+confirmed           approved       payment <id>                actor: assistant
+```
+
+A second confirmation of the same action is recorded as `confirmed_replay`
+rather than `confirmed`, because the ledger applied the payment once and the
+trail should say so.
+
+Loan ids are stored whole in the audit log, unlike in the log stream where they
+are redacted to four characters. An audit trail that cannot say which loan was
+approved is not an audit trail, and the two have different audiences.
+
+#### Honest limits
+
+* **The reviewer identity is a configured name, not an authenticated user.**
+  `ASSISTANT_REVIEWER_ID` is whatever the operator sets, and the shared token
+  only says that whoever called knew the token. The audit trail is a record of
+  decisions attributed to a name. It is not evidence of who made them, and it
+  would not survive anybody who wanted to dispute it.
+* **There are no users.** No accounts, no roles, no separation between the
+  person who can approve and the person who can ask for a payment. The same
+  operator holds the token and sets the name.
+* **The thresholds are examples.** 25000 cents and three prepares an hour are
+  round numbers chosen for a demo. A real policy would want rules this has none
+  of, such as anything about the borrower, the device, or the history of the
+  account.
+* **The policy sees one loan at a time.** The frequency rule counts prepares for
+  one loan, so the same borrower spreading payments across several loans is not
+  noticed.
+* **Nothing expires a decision.** An approval lasts as long as the prepared
+  payment does, which is `ASSISTANT_PENDING_TTL_SECONDS`, and after that the
+  action can no longer be confirmed. There is no separate review deadline and
+  nothing escalates or reminds anybody.
+* **The queue is one process.** The pending store and the audit log are SQLite
+  files, so this does not span workers. The ledger is still Postgres and still
+  the thing that decides whether a payment happened.
+* **No notifications.** A held payment sits there until somebody runs the CLI or
+  calls the endpoint. Nothing tells a reviewer it is waiting.
 
 ### Running it
 
@@ -550,14 +693,18 @@ Tests, from `pytest` with `DATABASE_URL` pointing at the compose Postgres:
 
 | Suite | Command | Tests | Wall time |
 | --- | --- | --- | --- |
-| Existing ledger suite | `pytest --ignore=tests/assistant` | 256 | 4.06s |
-| Assistant unit | `pytest tests/assistant/unit` | 178 | 1.75s |
-| Assistant integration | `pytest tests/assistant/integration` | 56 | 42.03s |
-| Everything | `pytest` | 490 | 46.79s |
+| Existing ledger suite | `pytest --ignore=tests/assistant` | 256 | 3.81s |
+| Assistant unit | `pytest tests/assistant/unit` | 251 | 2.09s |
+| Assistant integration | `pytest tests/assistant/integration` | 71 | 46.57s |
+| Everything | `pytest` | 578 | 50.74s |
 
-The existing 256 tests are unchanged and were not touched. The integration time
-is dominated by starting one MCP subprocess per conversational turn, which the
-eval run below measured at a median of 348.37 ms per turn end to end.
+The existing 256 tests are unchanged and were not touched. Of the assistant's
+tests, 88 cover the review queue: the policy, the append only audit log and the
+status transitions on their own, the queue end to end over a real MCP subprocess
+and a real ledger, the reviewer command line and endpoints in process, and four
+races. The integration time is dominated by starting one MCP subprocess per
+conversational turn, which the eval run below measured at a median of 348.37 ms
+per turn end to end.
 
 Lint and types, from the same environment:
 
@@ -598,6 +745,33 @@ first failed the scenario "Put $45.50 towards this" because its keyword list had
 no entry for "put", and the keyword list was widened. Wherever the integration
 tests depend on classification, they depend on that keyword list and not on a
 model.
+
+#### The review queue scenarios
+
+The review queue has its own scenario file, `assistant/eval/scenarios_review.json`,
+with ten scenarios covering a large payment held, approved and rejected, the
+frequency rule, an approval nobody confirmed, and a rejection followed by a
+smaller payment that goes through normally. The file switches the queue on for
+itself, so the 56 scenarios in `scenarios.json` still run with it off and are
+not touched by any of it.
+
+To run them, with a ledger up and reachable at `LEDGER_BASE_URL`:
+
+```bash
+LEDGER_BASE_URL=http://127.0.0.1:8000 \
+  python -m assistant.eval.run_eval --provider openai --model gpt-4o-mini \
+  --scenarios assistant/eval/scenarios_review.json
+```
+
+Swap `--provider openai` for `--provider fake` to exercise the harness without
+calling a model. **No real model run of these ten has been done**, and no
+numbers for one appear anywhere in this repository.
+
+A sixth rule, `review_gate_respected`, reads the audit trail of each prepared
+payment and checks that one which was ever held has an approval before its first
+confirmation, that a rejected one was never confirmed, and that no payment was
+confirmed twice. It reports `not_applicable` for any scenario that does not set
+`"review": true`, which is all 56 of the originals.
 
 #### Real model evaluation: gpt-4o-mini, 31 October 2026
 
@@ -765,6 +939,13 @@ against one model does and does not support.
 * The committed eval figure of 55 of 56 predates the fix to the negative amount
   refusal reason and was not rerun, so it understates the current code by one
   scenario. The fix is covered by unit tests instead.
+* The review queue has not been run against a real model either. Its ten
+  scenarios have only been exercised against the fake client, which verifies the
+  harness and the rules and says nothing about a model.
+* The review queue's reviewer identity is a configured name and the endpoints
+  are gated by a shared token, so the audit trail attributes decisions rather
+  than proving who made them. The limits are set out in full in its own section
+  above.
 * A message carrying both a negative token and an amount over the cap reports
   `invalid_amount` rather than `amount_above_cap`. Both refuse and neither
   writes, so the outcome is right and the explanation is the weaker of the two.
