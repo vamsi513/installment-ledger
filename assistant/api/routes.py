@@ -84,7 +84,7 @@ def _store(settings: Settings) -> SessionLoanStore:
     return SessionLoanStore(settings.state_db_path)
 
 
-def _error(status: int, code: str, message: str, **details: Any) -> JSONResponse:
+def error_response(status: int, code: str, message: str, **details: Any) -> JSONResponse:
     """The ledger's error envelope, so a caller parses one shape for both."""
     return JSONResponse(
         status_code=status,
@@ -133,7 +133,7 @@ async def chat(request: ChatRequest) -> Any:
     try:
         loans = _store(settings).bind(request.session_id, request.loan_ids)
     except TooManyLoansForSession as exc:
-        return _error(422, "too_many_loans_for_session", str(exc))
+        return error_response(422, "too_many_loans_for_session", str(exc))
 
     return await _run(settings, request.session_id, request.message, loans)
 
@@ -266,6 +266,10 @@ def build_assistant_app() -> FastAPI:
     from app.logging_setup import RequestLogMiddleware
     from app.main import handle_api_error, handle_validation_error
 
+    # Imported here rather than at module scope: review_routes imports
+    # error_response from this module, so a top level import would be circular.
+    from .review_routes import router as review_router
+
     application = FastAPI(
         title="installment-ledger-assistant",
         version="0.1.0",
@@ -278,4 +282,5 @@ def build_assistant_app() -> FastAPI:
         handle_validation_error,  # type: ignore[arg-type]
     )
     application.include_router(router)
+    application.include_router(review_router)
     return application
