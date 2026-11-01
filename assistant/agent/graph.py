@@ -344,7 +344,7 @@ def _respond_to_read(payload: dict[str, Any]) -> tuple[str, str]:
         return text, Outcome.ANSWERED.value
     if status == "rejected":
         return (
-            replies.ledger_rejection_reply(summary.get("error_code"), summary.get("message")),
+            replies.rejection_reply(summary.get("error_code"), summary.get("message")),
             Outcome.REFUSED.value,
         )
     if status == "unknown":
@@ -363,7 +363,7 @@ def _respond_to_payment_request(payload: dict[str, Any]) -> tuple[str, str]:
         return replies.payment_preview_reply(preview), Outcome.PREPARED.value
     if status == "rejected":
         return (
-            replies.ledger_rejection_reply(preview.get("error_code"), preview.get("message")),
+            replies.rejection_reply(preview.get("error_code"), preview.get("message")),
             Outcome.REFUSED.value,
         )
     if status == "unknown":
@@ -378,7 +378,7 @@ def _respond_to_confirmation(payload: dict[str, Any]) -> tuple[str, str]:
         return replies.payment_applied_reply(outcome), Outcome.APPLIED.value
     if status == "rejected":
         return (
-            replies.ledger_rejection_reply(outcome.get("error_code"), outcome.get("message")),
+            replies.rejection_reply(outcome.get("error_code"), outcome.get("message")),
             Outcome.REFUSED.value,
         )
     if status == "unknown":

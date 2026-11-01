@@ -20,6 +20,7 @@ reason so a run that quietly collects nothing here still says why.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import socket
 import threading
@@ -116,6 +117,53 @@ def make_settings(
 def assistant_settings(tmp_path: Path, base_url: str) -> Settings:
     """Settings pointing at the ledger test server, with the fake model client."""
     return make_settings(ledger_base_url=base_url, state_dir=tmp_path)
+
+
+#: Thresholds for the review tests, chosen so the ordinary 30000 cent payment
+#: the other tests use stays under the amount rule and a 50000 cent one does not.
+REVIEW_THRESHOLD_CENTS = 40_000
+REVIEW_MAX_PREPARES = 3
+REVIEW_WINDOW_SECONDS = 3_600
+TEST_REVIEWER_ID = "reviewer-under-test"
+TEST_REVIEW_TOKEN = "review-test-token"
+
+
+def with_review(
+    settings: Settings,
+    *,
+    enabled: bool = True,
+    threshold_cents: int = REVIEW_THRESHOLD_CENTS,
+    max_prepares: int = REVIEW_MAX_PREPARES,
+    window_seconds: int = REVIEW_WINDOW_SECONDS,
+    reviewer_id: str = TEST_REVIEWER_ID,
+    review_api_token: str | None = TEST_REVIEW_TOKEN,
+) -> Settings:
+    """The same settings with the review queue switched on."""
+    return dataclasses.replace(
+        settings,
+        review_enabled=enabled,
+        review_threshold_cents=threshold_cents,
+        review_max_prepares=max_prepares,
+        review_window_seconds=window_seconds,
+        reviewer_id=reviewer_id,
+        review_api_token=review_api_token,
+    )
+
+
+@pytest.fixture
+def review_settings(assistant_settings: Settings) -> Settings:
+    return with_review(assistant_settings)
+
+
+@pytest.fixture
+def review_settings_offline(tmp_path: Path) -> Settings:
+    """Review settings that need no ledger server.
+
+    The reviewer interface only touches the review store, so these tests do not
+    start the ledger. The URL points at a closed port on purpose, so a test that
+    accidentally reaches for the ledger fails rather than passing quietly.
+    """
+    return with_review(make_settings(ledger_base_url="http://127.0.0.1:1", state_dir=tmp_path))
 
 
 def serve_in_thread(app: object, port: int) -> Iterator[str]:

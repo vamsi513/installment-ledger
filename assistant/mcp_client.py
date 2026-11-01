@@ -58,6 +58,8 @@ def _server_parameters(settings: Settings) -> StdioServerParameters:
     # them; the tool server never talks to a model.
     env = dict(os.environ)
     env.pop("OPENAI_API_KEY", None)
+    env.pop("ASSISTANT_REVIEW_TOKEN", None)
+    env.pop("ASSISTANT_REVIEWER_ID", None)
     env.update(
         {
             "LEDGER_BASE_URL": settings.ledger_base_url,
@@ -65,6 +67,15 @@ def _server_parameters(settings: Settings) -> StdioServerParameters:
             "ASSISTANT_MAX_PAYMENT_CENTS": str(settings.max_payment_cents),
             "ASSISTANT_PENDING_TTL_SECONDS": str(settings.pending_ttl_seconds),
             "ASSISTANT_LEDGER_TIMEOUT_SECONDS": str(settings.ledger_timeout_seconds),
+            # The review policy has to reach the child, because the child is
+            # where prepare_payment decides whether to hold an action. The
+            # reviewer identity and the reviewer token are deliberately not
+            # passed: the tool server has no way to approve anything and does
+            # not need either of them.
+            "ASSISTANT_REVIEW_ENABLED": "1" if settings.review_enabled else "0",
+            "ASSISTANT_REVIEW_THRESHOLD_CENTS": str(settings.review_threshold_cents),
+            "ASSISTANT_REVIEW_MAX_PREPARES": str(settings.review_max_prepares),
+            "ASSISTANT_REVIEW_WINDOW_SECONDS": str(settings.review_window_seconds),
             "PYTHONPATH": os.pathsep.join(
                 [
                     os.getcwd(),

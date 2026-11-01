@@ -187,14 +187,32 @@ LEDGER_REJECTION_REPLIES: dict[str, str] = {
     ),
     "amount_above_cap": ("That amount is above the per payment cap, so nothing was paid."),
     "invalid_amount": "A payment has to be a positive amount, so nothing was paid.",
+    "awaiting_review": (
+        "That payment is still waiting for a reviewer to approve it, so nothing was "
+        "paid. I will not take it until somebody has."
+    ),
+    "review_rejected": (
+        "A reviewer rejected that payment, so it will not be paid. Tell me a different "
+        "amount if you want to try again."
+    ),
 }
 
 
-def ledger_rejection_reply(code: str | None, message: str | None) -> str:
+def rejection_reply(code: str | None, message: str | None) -> str:
+    """Wording for a refusal that came back from a tool call.
+
+    The fallback does not say who refused. Some of these codes come from the
+    ledger and some from the review queue, which refuses before the ledger is
+    contacted at all, so naming the ledger would be wrong half the time.
+    """
     if code and code in LEDGER_REJECTION_REPLIES:
         return LEDGER_REJECTION_REPLIES[code]
-    detail = f" The ledger said: {message}" if message else ""
-    return f"The ledger refused that and nothing was changed.{detail}"
+    detail = f" The reason given: {message}" if message else ""
+    return f"That was refused and nothing was changed.{detail}"
+
+
+#: Kept so the older name still resolves for anything that imports it.
+ledger_rejection_reply = rejection_reply
 
 
 def unknown_outcome_reply() -> str:
