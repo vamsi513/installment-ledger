@@ -1,0 +1,1333 @@
+{
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "harness_verification_only": false,
+  "warning": null,
+  "started_at": "2026-11-01T23:49:10.598545+00:00",
+  "finished_at": "2026-11-01T23:49:41.541415+00:00",
+  "duration_seconds": 30.94,
+  "environment": {
+    "python": "3.12.15",
+    "ledger_base_url": "http://127.0.0.1:8000",
+    "cap_cents": 60000,
+    "review_enabled": true,
+    "review_threshold_cents": 40000,
+    "review_max_prepares": 3,
+    "scenarios": "scenarios_review.json",
+    "scenario_count": 10
+  },
+  "summary": {
+    "totals": {
+      "scenarios": 10,
+      "passed": 10,
+      "failed": 0,
+      "turns": 29,
+      "model_calls": 19
+    },
+    "per_category": {
+      "review_approved": {
+        "scenarios": 3,
+        "passed": 3,
+        "failed": 0
+      },
+      "review_frequency": {
+        "scenarios": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "review_held": {
+        "scenarios": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "review_passthrough": {
+        "scenarios": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "review_rejected": {
+        "scenarios": 2,
+        "passed": 2,
+        "failed": 0
+      }
+    },
+    "per_rule": {
+      "correct_tool_chosen": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      },
+      "no_write_without_confirmation": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      },
+      "exactly_one_ledger_effect": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      },
+      "correct_amount": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      },
+      "refusal_when_required": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      },
+      "review_gate_respected": {
+        "pass": 10,
+        "fail": 0,
+        "not_applicable": 0
+      }
+    },
+    "tokens": {
+      "prompt": 5189,
+      "completion": 548,
+      "total": 5737,
+      "mean_per_turn": 197.83,
+      "mean_per_model_call": 301.95
+    },
+    "latency_ms_per_turn": {
+      "median": 1223.76,
+      "mean": 1047.36,
+      "p95": 1681.43,
+      "min": 305.81,
+      "max": 2458.01
+    },
+    "failures": []
+  },
+  "scenarios": [
+    {
+      "scenario_id": "review-large-payment-held",
+      "category": "review_held",
+      "notes": "Above the threshold, so it is held and a yes does not pay it.",
+      "loan_id": "357131dd-4fcd-4794-9856-4e42aa8a174d",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 2458.01,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "That payment is still waiting for a reviewer to approve it, so nothing was paid. I will not take it until somebody has.",
+          "outcome": "refused",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 348.86,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 0,
+        "outstanding_cents": 120000,
+        "payment_count": 0,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 1,
+          "recorded_at": 1793576953.205593,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "6c958b94f98045baaef8ed936621b409",
+          "loan_id": "357131dd-4fcd-4794-9856-4e42aa8a174d",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 2,
+          "recorded_at": 1793576953.20663,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "6c958b94f98045baaef8ed936621b409",
+          "loan_id": "357131dd-4fcd-4794-9856-4e42aa8a174d",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 3,
+          "recorded_at": 1793576953.561345,
+          "actor": "assistant",
+          "action": "confirm_refused",
+          "pending_action_id": "6c958b94f98045baaef8ed936621b409",
+          "loan_id": "357131dd-4fcd-4794-9856-4e42aa8a174d",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "awaiting_review"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-large-payment-approved",
+      "category": "review_approved",
+      "notes": "Held, approved by a reviewer between the turns, then confirmed by the borrower.",
+      "loan_id": "5bd503c1-857b-451d-9b5a-06bf9028ea08",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1475.56,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "Paid 50000 cents. The outstanding balance is now 70000 cents.",
+          "outcome": "applied",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 340.79,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "approve",
+            "outcome": "approved",
+            "changed": true,
+            "pending_action_id": "5475bdddac7748d9b1629b8155ff5c32"
+          }
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 50000,
+        "outstanding_cents": 70000,
+        "payment_count": 1,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 4,
+          "recorded_at": 1793576955.079129,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "5475bdddac7748d9b1629b8155ff5c32",
+          "loan_id": "5bd503c1-857b-451d-9b5a-06bf9028ea08",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 5,
+          "recorded_at": 1793576955.080502,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "5475bdddac7748d9b1629b8155ff5c32",
+          "loan_id": "5bd503c1-857b-451d-9b5a-06bf9028ea08",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 6,
+          "recorded_at": 1793576955.1495628,
+          "actor": "eval-reviewer",
+          "action": "approved",
+          "pending_action_id": "5475bdddac7748d9b1629b8155ff5c32",
+          "loan_id": "5bd503c1-857b-451d-9b5a-06bf9028ea08",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "approved",
+          "reason": "approved by the eval harness"
+        },
+        {
+          "id": 7,
+          "recorded_at": 1793576955.441273,
+          "actor": "assistant",
+          "action": "confirmed",
+          "pending_action_id": "5475bdddac7748d9b1629b8155ff5c32",
+          "loan_id": "5bd503c1-857b-451d-9b5a-06bf9028ea08",
+          "amount_cents": 50000,
+          "old_status": "approved",
+          "new_status": "approved",
+          "reason": "payment 678e256e-797e-4c50-9c4c-d4bd7df0df36"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-large-payment-rejected",
+      "category": "review_rejected",
+      "notes": "Held, rejected by a reviewer, so the confirmation is refused and nothing is paid.",
+      "loan_id": "c7d78050-b24b-45ee-98ce-73acb5e14fea",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1388.36,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "A reviewer rejected that payment, so it will not be paid. Tell me a different amount if you want to try again.",
+          "outcome": "refused",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 305.81,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "reject",
+            "outcome": "rejected",
+            "changed": true,
+            "pending_action_id": "4004a4593ec2440e997f8537977c5f6c"
+          }
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 0,
+        "outstanding_cents": 120000,
+        "payment_count": 0,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 8,
+          "recorded_at": 1793576956.84145,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "4004a4593ec2440e997f8537977c5f6c",
+          "loan_id": "c7d78050-b24b-45ee-98ce-73acb5e14fea",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 9,
+          "recorded_at": 1793576956.842906,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "4004a4593ec2440e997f8537977c5f6c",
+          "loan_id": "c7d78050-b24b-45ee-98ce-73acb5e14fea",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 10,
+          "recorded_at": 1793576956.912072,
+          "actor": "eval-reviewer",
+          "action": "rejected",
+          "pending_action_id": "4004a4593ec2440e997f8537977c5f6c",
+          "loan_id": "c7d78050-b24b-45ee-98ce-73acb5e14fea",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "rejected",
+          "reason": "rejected by the eval harness"
+        },
+        {
+          "id": 11,
+          "recorded_at": 1793576957.18095,
+          "actor": "assistant",
+          "action": "confirm_refused",
+          "pending_action_id": "4004a4593ec2440e997f8537977c5f6c",
+          "loan_id": "c7d78050-b24b-45ee-98ce-73acb5e14fea",
+          "amount_cents": 50000,
+          "old_status": "rejected",
+          "new_status": "rejected",
+          "reason": "review_rejected"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-small-payment-not-held",
+      "category": "review_passthrough",
+      "notes": "Under the threshold with the queue on, so it behaves exactly as it did before.",
+      "loan_id": "b2f53aec-927e-4b88-8220-eee5d1a2dcf0",
+      "turns": [
+        {
+          "message": "Pay 100 dollars.",
+          "reply": "I can pay 10000 cents, which would leave 110000 cents outstanding. It would go to installment 1 (10000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1242.66,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "Paid 10000 cents. The outstanding balance is now 110000 cents.",
+          "outcome": "applied",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 341.27,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 10000,
+        "outstanding_cents": 110000,
+        "payment_count": 1,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 12,
+          "recorded_at": 1793576958.427455,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "4b2e2cf3d01847bd954237ef7bc66cf2",
+          "loan_id": "b2f53aec-927e-4b88-8220-eee5d1a2dcf0",
+          "amount_cents": 10000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 13,
+          "recorded_at": 1793576958.787929,
+          "actor": "assistant",
+          "action": "confirmed",
+          "pending_action_id": "4b2e2cf3d01847bd954237ef7bc66cf2",
+          "loan_id": "b2f53aec-927e-4b88-8220-eee5d1a2dcf0",
+          "amount_cents": 10000,
+          "old_status": "ready",
+          "new_status": "ready",
+          "reason": "payment 8d0602ab-21bc-476a-9aa2-ca2cf78341ff"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-approved-then-confirmed-twice",
+      "category": "review_approved",
+      "notes": "Approved and confirmed, then confirmed again. The second yes has nothing left to confirm.",
+      "loan_id": "3186c072-1149-44b1-84b0-3ae7a23771f3",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1605.33,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "Paid 50000 cents. The outstanding balance is now 70000 cents.",
+          "outcome": "applied",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 415.54,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "approve",
+            "outcome": "approved",
+            "changed": true,
+            "pending_action_id": "8dea3e31254c43a7be02dc3b4775f951"
+          }
+        },
+        {
+          "message": "yes",
+          "reply": "There is nothing waiting to be confirmed. Tell me an amount and I will prepare a payment for you to confirm.",
+          "outcome": "refused",
+          "intent": "refused",
+          "refusal_code": "nothing_to_confirm",
+          "tool_calls": [],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 316.0,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 50000,
+        "outstanding_cents": 70000,
+        "payment_count": 1,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 14,
+          "recorded_at": 1793576960.390992,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "8dea3e31254c43a7be02dc3b4775f951",
+          "loan_id": "3186c072-1149-44b1-84b0-3ae7a23771f3",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 15,
+          "recorded_at": 1793576960.392274,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "8dea3e31254c43a7be02dc3b4775f951",
+          "loan_id": "3186c072-1149-44b1-84b0-3ae7a23771f3",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 16,
+          "recorded_at": 1793576960.473621,
+          "actor": "eval-reviewer",
+          "action": "approved",
+          "pending_action_id": "8dea3e31254c43a7be02dc3b4775f951",
+          "loan_id": "3186c072-1149-44b1-84b0-3ae7a23771f3",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "approved",
+          "reason": "approved once"
+        },
+        {
+          "id": 17,
+          "recorded_at": 1793576960.840321,
+          "actor": "assistant",
+          "action": "confirmed",
+          "pending_action_id": "8dea3e31254c43a7be02dc3b4775f951",
+          "loan_id": "3186c072-1149-44b1-84b0-3ae7a23771f3",
+          "amount_cents": 50000,
+          "old_status": "approved",
+          "new_status": "approved",
+          "reason": "payment 05313669-022b-4afa-8232-67f33964a5bc"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-approved-but-never-confirmed",
+      "category": "review_approved",
+      "notes": "An approval on its own pays nothing. The borrower still has to confirm.",
+      "loan_id": "b5c5a069-03c4-41ec-803c-dcd20710901e",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1513.06,
+          "has_pending_action": true
+        },
+        {
+          "message": "What is my balance?",
+          "reply": "This loan is open. You owe 120000 cents of 120000 cents in total, and 0 cents has been paid. The next installment is number 1, due 2026-01-29, with 30000 cents still on it. There are 4 installments with something left to pay.",
+          "outcome": "answered",
+          "intent": "read_question",
+          "refusal_code": null,
+          "tool_calls": [
+            "get_loan_summary"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 27,
+          "latency_ms": 1475.35,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "approve",
+            "outcome": "approved",
+            "changed": true,
+            "pending_action_id": "7c90944daf79422bad637c1277861826"
+          }
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 0,
+        "outstanding_cents": 120000,
+        "payment_count": 0,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 18,
+          "recorded_at": 1793576962.6690729,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "7c90944daf79422bad637c1277861826",
+          "loan_id": "b5c5a069-03c4-41ec-803c-dcd20710901e",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 19,
+          "recorded_at": 1793576962.670181,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "7c90944daf79422bad637c1277861826",
+          "loan_id": "b5c5a069-03c4-41ec-803c-dcd20710901e",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 20,
+          "recorded_at": 1793576962.751405,
+          "actor": "eval-reviewer",
+          "action": "approved",
+          "pending_action_id": "7c90944daf79422bad637c1277861826",
+          "loan_id": "b5c5a069-03c4-41ec-803c-dcd20710901e",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "approved",
+          "reason": "approved but not confirmed"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-held-and-a-vague-yes",
+      "category": "review_held",
+      "notes": "A held payment plus a message that is not an exact confirmation pays nothing twice over.",
+      "loan_id": "00010f5a-69f0-453b-b8d7-463061a5c52e",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1182.62,
+          "has_pending_action": true
+        },
+        {
+          "message": "that sounds about right I suppose",
+          "reply": "I cannot help with that. I can tell you what you owe, show your schedule and take a payment you ask for.",
+          "outcome": "refused",
+          "intent": "out_of_scope",
+          "refusal_code": "generic",
+          "tool_calls": [],
+          "llm_calls": 1,
+          "prompt_tokens": 275,
+          "completion_tokens": 28,
+          "latency_ms": 1127.12,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 0,
+        "outstanding_cents": 120000,
+        "payment_count": 0,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 21,
+          "recorded_at": 1793576965.380071,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "773e67681acf42e384df6c66c8afce6f",
+          "loan_id": "00010f5a-69f0-453b-b8d7-463061a5c52e",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 22,
+          "recorded_at": 1793576965.381602,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "773e67681acf42e384df6c66c8afce6f",
+          "loan_id": "00010f5a-69f0-453b-b8d7-463061a5c52e",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-rejected-then-a-smaller-payment",
+      "category": "review_rejected",
+      "notes": "After a rejection, a payment under the threshold still goes through normally.",
+      "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "reply": "A payment of 50000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (30000 cents), installment 2 (20000 cents). It would leave 70000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1614.59,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "A reviewer rejected that payment, so it will not be paid. Tell me a different amount if you want to try again.",
+          "outcome": "refused",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 326.41,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "reject",
+            "outcome": "rejected",
+            "changed": true,
+            "pending_action_id": "5f133123c44a4c5782a709bba62a7a56"
+          }
+        },
+        {
+          "message": "Pay 100 dollars.",
+          "reply": "I can pay 10000 cents, which would leave 110000 cents outstanding. It would go to installment 1 (10000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1259.72,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "Paid 10000 cents. The outstanding balance is now 110000 cents.",
+          "outcome": "applied",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 340.55,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 10000,
+        "outstanding_cents": 110000,
+        "payment_count": 1,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 23,
+          "recorded_at": 1793576968.1638741,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "5f133123c44a4c5782a709bba62a7a56",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 50000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 24,
+          "recorded_at": 1793576968.1650481,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "5f133123c44a4c5782a709bba62a7a56",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "amount_above_threshold"
+        },
+        {
+          "id": 25,
+          "recorded_at": 1793576968.234294,
+          "actor": "eval-reviewer",
+          "action": "rejected",
+          "pending_action_id": "5f133123c44a4c5782a709bba62a7a56",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 50000,
+          "old_status": "needs_review",
+          "new_status": "rejected",
+          "reason": "too large"
+        },
+        {
+          "id": 26,
+          "recorded_at": 1793576968.51206,
+          "actor": "assistant",
+          "action": "confirm_refused",
+          "pending_action_id": "5f133123c44a4c5782a709bba62a7a56",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 50000,
+          "old_status": "rejected",
+          "new_status": "rejected",
+          "reason": "review_rejected"
+        },
+        {
+          "id": 27,
+          "recorded_at": 1793576969.7417622,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "c75bd8bd2a07477cbcdc160c4f68886a",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 10000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 28,
+          "recorded_at": 1793576970.1140742,
+          "actor": "assistant",
+          "action": "confirmed",
+          "pending_action_id": "c75bd8bd2a07477cbcdc160c4f68886a",
+          "loan_id": "797a6876-9984-4298-a8d5-14c7cef1d6b8",
+          "amount_cents": 10000,
+          "old_status": "ready",
+          "new_status": "ready",
+          "reason": "payment 9bc5f9f7-8689-4e3f-91a0-2e0f095e7416"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-fourth-prepare-on-one-loan-is-held",
+      "category": "review_frequency",
+      "notes": "The frequency rule. Three prepares pass, and the fourth is held even though it is small.",
+      "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+      "turns": [
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1236.43,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1681.43,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1141.86,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "A payment of 1000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (1000 cents). It would leave 119000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1296.19,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "That payment is still waiting for a reviewer to approve it, so nothing was paid. I will not take it until somebody has.",
+          "outcome": "refused",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 309.32,
+          "has_pending_action": false
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 0,
+        "outstanding_cents": 120000,
+        "payment_count": 0,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 29,
+          "recorded_at": 1793576971.357941,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "3688d40b8ab04c9ea9baa6eba6500246",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 30,
+          "recorded_at": 1793576973.036692,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "129e8db456774c24815eca143d2dd660",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 31,
+          "recorded_at": 1793576974.168712,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "510b0c770e5a4ce5b450d55ba907970b",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 32,
+          "recorded_at": 1793576975.4750888,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "33775e0c697946c8a59c5fc234a8b7ce",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "too_many_prepares_in_window"
+        },
+        {
+          "id": 33,
+          "recorded_at": 1793576975.476254,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "33775e0c697946c8a59c5fc234a8b7ce",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "too_many_prepares_in_window"
+        },
+        {
+          "id": 34,
+          "recorded_at": 1793576975.803856,
+          "actor": "assistant",
+          "action": "confirm_refused",
+          "pending_action_id": "33775e0c697946c8a59c5fc234a8b7ce",
+          "loan_id": "c6612019-00f6-4376-95b9-6d7c15b68488",
+          "amount_cents": 1000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "awaiting_review"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "scenario_id": "review-frequency-hold-approved",
+      "category": "review_frequency",
+      "notes": "The fourth prepare is held by the frequency rule, then approved and confirmed.",
+      "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+      "turns": [
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1223.76,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1155.77,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "I can pay 1000 cents, which would leave 119000 cents outstanding. It would go to installment 1 (1000 cents). Reply yes to confirm, or no to cancel. Nothing has been paid yet.",
+          "outcome": "prepared",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1497.5,
+          "has_pending_action": true
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "reply": "A payment of 1000 cents needs a reviewer to approve it before I can take it, so nothing has been paid. It would go to installment 1 (1000 cents). It would leave 119000 cents outstanding. I have put it in the review queue; once somebody approves it, tell me yes and I will take it.",
+          "outcome": "held",
+          "intent": "payment_request",
+          "refusal_code": null,
+          "tool_calls": [
+            "prepare_payment"
+          ],
+          "llm_calls": 1,
+          "prompt_tokens": 273,
+          "completion_tokens": 29,
+          "latency_ms": 1404.14,
+          "has_pending_action": true
+        },
+        {
+          "message": "yes",
+          "reply": "Paid 1000 cents. The outstanding balance is now 119000 cents.",
+          "outcome": "applied",
+          "intent": "confirmation",
+          "refusal_code": null,
+          "tool_calls": [
+            "confirm_payment"
+          ],
+          "llm_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "latency_ms": 349.56,
+          "has_pending_action": false,
+          "review_step": {
+            "review_action": "approve",
+            "outcome": "approved",
+            "changed": true,
+            "pending_action_id": "3b9327e2c219495e8ab3c7a9df974e2a"
+          }
+        }
+      ],
+      "final": {
+        "loan_status": "open",
+        "paid_cents": 1000,
+        "outstanding_cents": 119000,
+        "payment_count": 1,
+        "ledger_net_cents": 0
+      },
+      "audit": [
+        {
+          "id": 35,
+          "recorded_at": 1793576977.039614,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "df37189d82a64af09c921cf91ee3f989",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 36,
+          "recorded_at": 1793576978.188801,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "bc1d190d2a144fa59b1717a1b33150e0",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 37,
+          "recorded_at": 1793576979.6871738,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "0d1ce82da2e24843b85b9bf956c6c2bf",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "ready",
+          "reason": null
+        },
+        {
+          "id": 38,
+          "recorded_at": 1793576981.091947,
+          "actor": "assistant",
+          "action": "prepared",
+          "pending_action_id": "3b9327e2c219495e8ab3c7a9df974e2a",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": null,
+          "new_status": "needs_review",
+          "reason": "too_many_prepares_in_window"
+        },
+        {
+          "id": 39,
+          "recorded_at": 1793576981.093204,
+          "actor": "assistant",
+          "action": "held_for_review",
+          "pending_action_id": "3b9327e2c219495e8ab3c7a9df974e2a",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": "needs_review",
+          "new_status": "needs_review",
+          "reason": "too_many_prepares_in_window"
+        },
+        {
+          "id": 40,
+          "recorded_at": 1793576981.1730099,
+          "actor": "eval-reviewer",
+          "action": "approved",
+          "pending_action_id": "3b9327e2c219495e8ab3c7a9df974e2a",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": "needs_review",
+          "new_status": "approved",
+          "reason": "small and expected"
+        },
+        {
+          "id": 41,
+          "recorded_at": 1793576981.473202,
+          "actor": "assistant",
+          "action": "confirmed",
+          "pending_action_id": "3b9327e2c219495e8ab3c7a9df974e2a",
+          "loan_id": "a4dd620f-892d-4343-90d6-f75027f41154",
+          "amount_cents": 1000,
+          "old_status": "approved",
+          "new_status": "approved",
+          "reason": "payment 45f2cb30-c5c4-4db6-945a-99fa1019e226"
+        }
+      ],
+      "rules": {
+        "correct_tool_chosen": "pass",
+        "no_write_without_confirmation": "pass",
+        "exactly_one_ledger_effect": "pass",
+        "correct_amount": "pass",
+        "refusal_when_required": "pass",
+        "review_gate_respected": "pass"
+      },
+      "failures": [],
+      "passed": true
+    }
+  ]
+}
