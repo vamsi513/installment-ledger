@@ -236,8 +236,13 @@ def mounted_app_url(migrated_database: None) -> Iterator[str]:
             else:
                 os.environ[key] = value
         get_settings.cache_clear()
-        for suffix in ("", "-checkpoints", "-wal", "-shm"):
-            Path(state_db + suffix).unlink(missing_ok=True)
+        # Every file the state path can spawn: the pending store, the LangGraph
+        # checkpoints, the review audit log, and the write ahead log and shared
+        # memory file SQLite puts beside each of them.
+        bases = ("", "-checkpoints", "-audit")
+        for base in bases:
+            for suffix in ("", "-wal", "-shm"):
+                Path(state_db + base + suffix).unlink(missing_ok=True)
 
 
 @pytest.fixture
