@@ -1,0 +1,4 @@
+# State files a test run can leave behind if it is interrupted before the
+# fixture tears them down. The pending store, the LangGraph checkpoints and the
+# review audit log, plus SQLite's write ahead log and shared memory files.
+.pytest-state-*

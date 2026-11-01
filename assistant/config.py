@@ -24,6 +24,14 @@ DEFAULT_WS_MAX_FRAME_BYTES = 4_096
 DEFAULT_WS_MAX_CONNECTIONS = 8
 DEFAULT_MAX_MESSAGE_CHARS = 2_000
 
+# Review queue defaults. The thresholds are examples picked to be easy to reason
+# about in a demo, not advice about where a real limit belongs. The whole feature
+# is off unless ASSISTANT_REVIEW_ENABLED says otherwise, so the assistant behaves
+# exactly as it did before this existed.
+DEFAULT_REVIEW_THRESHOLD_CENTS = 25_000
+DEFAULT_REVIEW_MAX_PREPARES = 3
+DEFAULT_REVIEW_WINDOW_SECONDS = 3_600
+
 
 def _int_env(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
@@ -70,6 +78,29 @@ class Settings:
     ws_max_connections: int
     enabled: bool
 
+    # Review queue. Appended with defaults so existing call sites are unchanged
+    # and so the feature is off unless it is switched on deliberately.
+    review_enabled: bool = False
+    review_threshold_cents: int = DEFAULT_REVIEW_THRESHOLD_CENTS
+    review_max_prepares: int = DEFAULT_REVIEW_MAX_PREPARES
+    review_window_seconds: int = DEFAULT_REVIEW_WINDOW_SECONDS
+    reviewer_id: str = ""
+    review_api_token: str | None = None
+
+    def require_reviewer_id(self) -> str:
+        """The configured reviewer identity.
+
+        There is no authentication anywhere in this service. This is a name read
+        from configuration so the audit trail records who a change is attributed
+        to. It proves nothing about who actually made the call.
+        """
+        if not self.reviewer_id.strip():
+            raise RuntimeError(
+                "ASSISTANT_REVIEWER_ID is not set. Set it to the name the audit "
+                "trail should attribute review decisions to."
+            )
+        return self.reviewer_id.strip()
+
     def require_openai_api_key(self) -> str:
         if not self.openai_api_key:
             raise RuntimeError(
@@ -97,6 +128,16 @@ def load_settings() -> Settings:
         ws_max_frame_bytes=_int_env("ASSISTANT_WS_MAX_FRAME_BYTES", DEFAULT_WS_MAX_FRAME_BYTES),
         ws_max_connections=_int_env("ASSISTANT_WS_MAX_CONNECTIONS", DEFAULT_WS_MAX_CONNECTIONS),
         enabled=_bool_env("ASSISTANT_ENABLED", True),
+        review_enabled=_bool_env("ASSISTANT_REVIEW_ENABLED", False),
+        review_threshold_cents=_int_env(
+            "ASSISTANT_REVIEW_THRESHOLD_CENTS", DEFAULT_REVIEW_THRESHOLD_CENTS
+        ),
+        review_max_prepares=_int_env("ASSISTANT_REVIEW_MAX_PREPARES", DEFAULT_REVIEW_MAX_PREPARES),
+        review_window_seconds=_int_env(
+            "ASSISTANT_REVIEW_WINDOW_SECONDS", DEFAULT_REVIEW_WINDOW_SECONDS
+        ),
+        reviewer_id=os.environ.get("ASSISTANT_REVIEWER_ID", ""),
+        review_api_token=os.environ.get("ASSISTANT_REVIEW_TOKEN") or None,
     )
 
 
