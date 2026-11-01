@@ -166,14 +166,24 @@ class AuditLog:
         )
 
     def entries(
-        self, *, pending_action_id: str | None = None, limit: int = 200
+        self,
+        *,
+        pending_action_id: str | None = None,
+        loan_id: str | None = None,
+        limit: int = 200,
     ) -> list[AuditEvent]:
         """Entries in the order they were written, oldest first."""
         query = "SELECT * FROM review_audit_log"
+        clauses: list[str] = []
         parameters: tuple[object, ...] = ()
         if pending_action_id is not None:
-            query += " WHERE pending_action_id = ?"
-            parameters = (pending_action_id,)
+            clauses.append("pending_action_id = ?")
+            parameters = (*parameters, pending_action_id)
+        if loan_id is not None:
+            clauses.append("loan_id = ?")
+            parameters = (*parameters, loan_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY id LIMIT ?"
         parameters = (*parameters, int(limit))
 

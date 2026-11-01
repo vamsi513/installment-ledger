@@ -26,7 +26,7 @@ import sys
 import time
 import uuid
 from collections import Counter, defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,8 @@ import httpx
 from ..agent import run_turn
 from ..config import Settings, load_settings
 from ..llm import build_llm_client
+from ..pending import PendingAction
+from ..review import ReviewService
 from .rules import FAILED, NOT_APPLICABLE, PASSED, RULE_NAMES, score_scenario
 
 HERE = Path(__file__).resolve().parent
@@ -50,9 +52,62 @@ FAKE_PROVIDER_WARNING = (
 )
 
 
-def load_scenarios(path: Path) -> tuple[list[dict[str, Any]], int]:
+@dataclass(frozen=True)
+class ScenarioFile:
+    scenarios: list[dict[str, Any]]
+    cap_cents: int
+    #: The review block, when the file has one. Absent means the queue stays off,
+    #: which is what every scenario written before it existed expects.
+    review: dict[str, Any] | None
+
+
+def load_scenarios(path: Path) -> ScenarioFile:
     document = json.loads(path.read_text())
-    return document["scenarios"], int(document.get("cap_cents", 60_000))
+    return ScenarioFile(
+        scenarios=document["scenarios"],
+        cap_cents=int(document.get("cap_cents", 60_000)),
+        review=document.get("review"),
+    )
+
+
+def apply_review_block(settings: Settings, review: dict[str, Any] | None) -> Settings:
+    """Switch the review queue on for a scenario file that asks for it."""
+    if not review:
+        return settings
+    return replace(
+        settings,
+        review_enabled=bool(review.get("enabled", True)),
+        review_threshold_cents=int(review.get("threshold_cents", 0)),
+        review_max_prepares=int(review.get("max_prepares", 0)),
+        review_window_seconds=int(review.get("window_seconds", 3_600)),
+        reviewer_id=str(review.get("reviewer_id", "eval-reviewer")),
+    )
+
+
+def newest_held_for_loan(service: ReviewService, loan_id: str) -> PendingAction | None:
+    held = [action for action in service.held(limit=100) if action.loan_id == loan_id]
+    return held[-1] if held else None
+
+
+def perform_review_action(
+    service: ReviewService, *, loan_id: str, action: str, reason: str | None, reviewer: str
+) -> dict[str, Any]:
+    """Approve or reject the newest held payment on this loan, before a turn runs."""
+    held = newest_held_for_loan(service, loan_id)
+    if held is None:
+        return {"review_action": action, "outcome": "nothing_held", "changed": False}
+    if action == "approve":
+        result = service.approve(held.pending_action_id, actor=reviewer, reason=reason)
+    elif action == "reject":
+        result = service.reject(held.pending_action_id, actor=reviewer, reason=reason or "rejected")
+    else:
+        raise SystemExit(f"unknown review_action {action!r}; expected approve or reject")
+    return {
+        "review_action": action,
+        "outcome": result.outcome.value,
+        "changed": result.changed,
+        "pending_action_id": held.pending_action_id,
+    }
 
 
 def ledger_base_url() -> str:
@@ -117,9 +172,25 @@ async def run_scenario(
         pay_directly(client, loan["id"], prior_cents)
         prior_payments = 1
 
+    service = ReviewService(settings) if settings.review_enabled else None
     session_id = f"eval-{scenario['id']}-{uuid.uuid4().hex[:8]}"
     turns: list[dict[str, Any]] = []
     for turn in scenario["turns"]:
+        review_step: dict[str, Any] | None = None
+        if turn.get("review_action"):
+            if service is None:
+                raise SystemExit(
+                    f"{scenario['id']} asks for a review action but the scenario file "
+                    "has no review block"
+                )
+            review_step = perform_review_action(
+                service,
+                loan_id=loan["id"],
+                action=str(turn["review_action"]),
+                reason=turn.get("review_reason"),
+                reviewer=settings.reviewer_id,
+            )
+
         model = build_llm_client(settings)
         result = await run_turn(
             session_id=session_id,
@@ -128,10 +199,18 @@ async def run_scenario(
             settings=settings,
             llm=model,
         )
-        turns.append({"message": turn["message"], **asdict(result)})
+        record: dict[str, Any] = {"message": turn["message"], **asdict(result)}
+        if review_step is not None:
+            record["review_step"] = review_step
+        turns.append(record)
 
     final = read_final_state(client, loan["id"], prior_payments=prior_payments)
-    score = score_scenario(scenario, turns, final)
+    audit = (
+        [entry.as_dict() for entry in service.audit.entries(loan_id=loan["id"], limit=200)]
+        if service is not None
+        else []
+    )
+    score = score_scenario(scenario, turns, final, audit)
     return {
         "scenario_id": scenario["id"],
         "category": scenario["category"],
@@ -139,6 +218,7 @@ async def run_scenario(
         "loan_id": loan["id"],
         "turns": turns,
         "final": final,
+        "audit": audit,
         "rules": score.rules,
         "failures": score.failures,
         "passed": score.passed,
@@ -315,7 +395,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def main_async(arguments: argparse.Namespace) -> int:
-    scenarios, cap_cents = load_scenarios(arguments.scenarios)
+    scenario_file = load_scenarios(arguments.scenarios)
+    scenarios, cap_cents = scenario_file.scenarios, scenario_file.cap_cents
     if arguments.category:
         wanted = set(arguments.category)
         scenarios = [item for item in scenarios if item["category"] in wanted]
@@ -345,6 +426,7 @@ async def main_async(arguments: argparse.Namespace) -> int:
         ws_max_connections=environment.ws_max_connections,
         enabled=True,
     )
+    settings = apply_review_block(settings, scenario_file.review)
     if arguments.provider == "openai":
         # Fails now rather than halfway through the run. The key is never printed.
         settings.require_openai_api_key()
@@ -378,6 +460,9 @@ async def main_async(arguments: argparse.Namespace) -> int:
             "python": sys.version.split()[0],
             "ledger_base_url": base_url,
             "cap_cents": cap_cents,
+            "review_enabled": settings.review_enabled,
+            "review_threshold_cents": settings.review_threshold_cents,
+            "review_max_prepares": settings.review_max_prepares,
             "scenarios": str(arguments.scenarios.name),
             "scenario_count": len(scenarios),
         },

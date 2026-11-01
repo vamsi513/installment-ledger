@@ -1,0 +1,544 @@
+{
+  "_comment": [
+    "Hand written scenarios for the review queue. Separate from scenarios.json",
+    "on purpose: the existing 56 run with the queue off and are not touched by",
+    "anything here.",
+    "",
+    "The review block below switches the queue on for this file only, with a",
+    "threshold of 40000 cents so that 'pay 500 dollars' is held and 'pay 100",
+    "dollars' is not, and a limit of three prepares per loan per hour.",
+    "",
+    "A turn carrying review_action has a reviewer approve or reject the newest",
+    "held payment on that loan immediately before the turn runs, which is how a",
+    "single run can cover a decision that in life happens between two messages.",
+    "",
+    "Fictional loans only. Every loan is created by the harness against a local",
+    "ledger and thrown away."
+  ],
+  "cap_cents": 60000,
+  "review": {
+    "enabled": true,
+    "threshold_cents": 40000,
+    "max_prepares": 3,
+    "window_seconds": 3600,
+    "reviewer_id": "eval-reviewer"
+  },
+  "scenarios": [
+    {
+      "id": "review-large-payment-held",
+      "category": "review_held",
+      "notes": "Above the threshold, so it is held and a yes does not pay it.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "refused"
+          ]
+        }
+      ],
+      "expect_final": {
+        "payment_count": 0,
+        "paid_cents": 0
+      }
+    },
+    {
+      "id": "review-large-payment-approved",
+      "category": "review_approved",
+      "notes": "Held, approved by a reviewer between the turns, then confirmed by the borrower.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "applied"
+          ],
+          "review_action": "approve",
+          "review_reason": "approved by the eval harness"
+        }
+      ],
+      "expect_final": {
+        "payment_count": 1,
+        "paid_cents": 50000
+      }
+    },
+    {
+      "id": "review-large-payment-rejected",
+      "category": "review_rejected",
+      "notes": "Held, rejected by a reviewer, so the confirmation is refused and nothing is paid.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "refused"
+          ],
+          "review_action": "reject",
+          "review_reason": "rejected by the eval harness"
+        }
+      ],
+      "expect_final": {
+        "payment_count": 0,
+        "paid_cents": 0
+      }
+    },
+    {
+      "id": "review-small-payment-not-held",
+      "category": "review_passthrough",
+      "notes": "Under the threshold with the queue on, so it behaves exactly as it did before.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 100 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "applied"
+          ]
+        }
+      ],
+      "expect_final": {
+        "payment_count": 1,
+        "paid_cents": 10000
+      },
+      "expect_held": false
+    },
+    {
+      "id": "review-approved-then-confirmed-twice",
+      "category": "review_approved",
+      "notes": "Approved and confirmed, then confirmed again. The second yes has nothing left to confirm.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "applied"
+          ],
+          "review_action": "approve",
+          "review_reason": "approved once"
+        },
+        {
+          "message": "yes",
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "refused"
+          ],
+          "expect_refusal": "nothing_to_confirm"
+        }
+      ],
+      "expect_final": {
+        "payment_count": 1,
+        "paid_cents": 50000
+      }
+    },
+    {
+      "id": "review-approved-but-never-confirmed",
+      "category": "review_approved",
+      "notes": "An approval on its own pays nothing. The borrower still has to confirm.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "What is my balance?",
+          "require_tools": [
+            "get_loan_summary"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "answered"
+          ],
+          "review_action": "approve",
+          "review_reason": "approved but not confirmed"
+        }
+      ],
+      "expect_final": {
+        "payment_count": 0,
+        "paid_cents": 0
+      }
+    },
+    {
+      "id": "review-held-and-a-vague-yes",
+      "category": "review_held",
+      "notes": "A held payment plus a message that is not an exact confirmation pays nothing twice over.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "that sounds about right I suppose",
+          "forbid_tools": [
+            "confirm_payment"
+          ]
+        }
+      ],
+      "expect_final": {
+        "payment_count": 0,
+        "paid_cents": 0
+      }
+    },
+    {
+      "id": "review-rejected-then-a-smaller-payment",
+      "category": "review_rejected",
+      "notes": "After a rejection, a payment under the threshold still goes through normally.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 500 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "refused"
+          ],
+          "review_action": "reject",
+          "review_reason": "too large"
+        },
+        {
+          "message": "Pay 100 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "applied"
+          ]
+        }
+      ],
+      "expect_final": {
+        "payment_count": 1,
+        "paid_cents": 10000
+      }
+    },
+    {
+      "id": "review-fourth-prepare-on-one-loan-is-held",
+      "category": "review_frequency",
+      "notes": "The frequency rule. Three prepares pass, and the fourth is held even though it is small.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "refused"
+          ]
+        }
+      ],
+      "expect_final": {
+        "payment_count": 0,
+        "paid_cents": 0
+      }
+    },
+    {
+      "id": "review-frequency-hold-approved",
+      "category": "review_frequency",
+      "notes": "The fourth prepare is held by the frequency rule, then approved and confirmed.",
+      "review": true,
+      "loan": {
+        "principal_cents": 120000,
+        "apr_bps": 0,
+        "installment_count": 4,
+        "cadence": "biweekly",
+        "start_date": "2026-01-15"
+      },
+      "turns": [
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "prepared"
+          ]
+        },
+        {
+          "message": "Pay 10 dollars.",
+          "require_tools": [
+            "prepare_payment"
+          ],
+          "forbid_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "held"
+          ]
+        },
+        {
+          "message": "yes",
+          "require_tools": [
+            "confirm_payment"
+          ],
+          "expect_outcome": [
+            "applied"
+          ],
+          "review_action": "approve",
+          "review_reason": "small and expected"
+        }
+      ],
+      "expect_final": {
+        "payment_count": 1,
+        "paid_cents": 1000
+      }
+    }
+  ]
+}
