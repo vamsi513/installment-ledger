@@ -24,6 +24,7 @@ class Intent(StrEnum):
 class Outcome(StrEnum):
     ANSWERED = "answered"
     PREPARED = "prepared"
+    HELD = "held"
     APPLIED = "applied"
     REFUSED = "refused"
     CANCELLED = "cancelled"

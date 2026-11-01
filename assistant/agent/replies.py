@@ -129,6 +129,27 @@ def payment_preview_reply(payload: dict[str, Any]) -> str:
     )
 
 
+def payment_held_reply(payload: dict[str, Any]) -> str:
+    """Said when the policy held a prepared payment for a reviewer.
+
+    It must not read like the usual preview, because replying yes will not pay
+    it. It says what will happen next instead of asking for a confirmation.
+    """
+    covers = payload.get("covers", [])
+    where = ""
+    if covers:
+        covered = ", ".join(
+            f"installment {item['sequence']} ({item['applied_cents']} cents)" for item in covers
+        )
+        where = f" It would go to {covered}."
+    return (
+        f"A payment of {payload['amount_cents']} cents needs a reviewer to approve it "
+        f"before I can take it, so nothing has been paid.{where} It would leave "
+        f"{payload['outstanding_after_cents']} cents outstanding. I have put it in the "
+        "review queue; once somebody approves it, tell me yes and I will take it."
+    )
+
+
 def payment_applied_reply(payload: dict[str, Any]) -> str:
     closed = payload.get("loan_status") == "closed"
     tail = " The loan is now paid off." if closed else ""

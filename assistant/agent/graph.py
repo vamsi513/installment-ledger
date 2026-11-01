@@ -356,6 +356,10 @@ def _respond_to_payment_request(payload: dict[str, Any]) -> tuple[str, str]:
     status = payload.get("preview_status")
     preview = payload.get("preview", {})
     if status == "ok":
+        if preview.get("review_status") == "needs_review":
+            # Prepared, but a reviewer has to clear it, so the reply must not
+            # ask for a confirmation that would be refused.
+            return replies.payment_held_reply(preview), Outcome.HELD.value
         return replies.payment_preview_reply(preview), Outcome.PREPARED.value
     if status == "rejected":
         return (

@@ -24,8 +24,14 @@ from ..ledger_client import (
     LedgerTimeout,
     LedgerUnavailable,
 )
-from ..pending import PendingActionExpired, PendingActionNotFound, PendingActionStore
+from ..pending import (
+    ActionStatus,
+    PendingActionExpired,
+    PendingActionNotFound,
+    PendingActionStore,
+)
 from ..redaction import redact_loan_id
+from ..review import ReviewService
 from .schemas import (
     CoveredInstallment,
     InstallmentLine,
@@ -42,6 +48,18 @@ SERVER_NAME = "installment-ledger-tools"
 TOOL_NAMES = ("get_loan_summary", "get_ledger_entries", "prepare_payment", "confirm_payment")
 
 MAX_LEDGER_LINES = 100
+
+#: Why confirm_payment refuses an action the review queue has not cleared.
+_REVIEW_REFUSALS: dict[ActionStatus, tuple[str, str]] = {
+    ActionStatus.NEEDS_REVIEW: (
+        "awaiting_review",
+        "This payment is waiting for a reviewer to approve it, so it has not been paid.",
+    ),
+    ActionStatus.REJECTED: (
+        "review_rejected",
+        "A reviewer rejected this payment, so it will not be paid.",
+    ),
+}
 
 LoanIdArg = Annotated[
     str,
@@ -98,6 +116,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     resolved = settings or get_settings()
     ledger = LedgerClient(resolved.ledger_base_url, timeout_seconds=resolved.ledger_timeout_seconds)
     pending = PendingActionStore(resolved.state_db_path, ttl_seconds=resolved.pending_ttl_seconds)
+    # Shares the pending store, so there is one table and one view of status.
+    # Deliberately no tool for approving: the agent must not be able to clear its
+    # own hold, so approval exists only on the reviewer CLI and HTTP endpoints.
+    review = ReviewService(resolved, store=pending)
 
     server = MCPServer(
         name=SERVER_NAME,
@@ -241,13 +263,20 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 outstanding_before_cents=outstanding,
             )
 
-        action = pending.create(loan_id=loan["id"], amount_cents=amount_cents)
+        decision = review.decide(loan_id=loan["id"], amount_cents=amount_cents)
+        action = pending.create(
+            loan_id=loan["id"],
+            amount_cents=amount_cents,
+            status=ActionStatus.NEEDS_REVIEW if decision.needs_review else ActionStatus.READY,
+        )
+        review.record_prepared(action, decision)
         logger.info(
             "prepared payment",
             extra={
                 "loan": redact_loan_id(loan["id"]),
                 "amount_cents": amount_cents,
                 "pending_action_id": action.pending_action_id,
+                "review_status": action.status.value,
             },
         )
         return PaymentPreview(
@@ -259,6 +288,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             covers=plan_allocation(loan["installments"], amount_cents),
             pending_action_id=action.pending_action_id,
             expires_at_epoch_seconds=action.expires_at,
+            review_status=action.status.value,
+            review_reasons=list(decision.reasons),
         )
 
     @server.tool(
@@ -287,6 +318,29 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 message="That prepared payment has expired. Prepare it again.",
             )
 
+        if not action.is_confirmable:
+            # Checked before the ledger is touched, so a held or rejected action
+            # never reaches the payments endpoint at all.
+            refusal = _REVIEW_REFUSALS[action.status]
+            review.record_confirm_refused(action, reason=refusal[0])
+            logger.info(
+                "confirmation refused by review",
+                extra={
+                    "loan": redact_loan_id(action.loan_id),
+                    "pending_action_id": action.pending_action_id,
+                    "review_status": action.status.value,
+                },
+            )
+            return PaymentOutcome(
+                status="rejected",
+                error_code=refusal[0],
+                message=refusal[1],
+                loan_id=action.loan_id,
+                amount_cents=action.amount_cents,
+                applied=False,
+                review_status=action.status.value,
+            )
+
         try:
             payment = await ledger.create_payment(
                 action.loan_id,
@@ -300,6 +354,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 message=exc.message,
                 loan_id=action.loan_id,
                 amount_cents=action.amount_cents,
+                review_status=action.status.value,
             )
         except LedgerTimeout as exc:
             # The write may have landed. Saying otherwise would be a lie, and
@@ -322,7 +377,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
                 applied=False,
             )
 
-        pending.mark_consumed(pending_action_id)
+        first_time = pending.mark_consumed(pending_action_id)
+        review.record_confirmed(
+            action, first_time=first_time, payment_id=str(payment.get("id") or "")
+        )
         loan = payment["loan"]
         logger.info(
             "payment applied",
@@ -340,6 +398,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             outstanding_after_cents=loan["outstanding_cents"],
             loan_status=loan["status"],
             applied=True,
+            review_status=action.status.value,
         )
 
     return server

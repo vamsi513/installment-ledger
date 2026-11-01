@@ -12,6 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ToolStatus = Literal["ok", "rejected", "unavailable", "unknown"]
 
+#: An action's standing with the review queue. ``ready`` means review was not
+#: required, which is every action when the queue is off.
+ReviewStatus = Literal["ready", "needs_review", "approved", "rejected"]
+
 
 class InstallmentLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -96,6 +100,18 @@ class PaymentPreview(BaseModel):
     expires_at_epoch_seconds: float | None = Field(
         default=None, description="After this time the pending action can no longer be confirmed."
     )
+    review_status: ReviewStatus | None = Field(
+        default=None,
+        description=(
+            "Standing with the review queue. 'ready' means it can be confirmed now. "
+            "'needs_review' means a reviewer has to approve it first, and "
+            "confirm_payment will refuse until they do."
+        ),
+    )
+    review_reasons: list[str] = Field(
+        default_factory=list,
+        description="Which policy rules held this payment back, when any did.",
+    )
 
 
 class PaymentOutcome(BaseModel):
@@ -113,4 +129,8 @@ class PaymentOutcome(BaseModel):
         default=False,
         description="True only when the ledger confirmed the payment. False when the "
         "outcome is unknown, such as after a timeout.",
+    )
+    review_status: ReviewStatus | None = Field(
+        default=None,
+        description="The action's standing with the review queue at the time of the call.",
     )
