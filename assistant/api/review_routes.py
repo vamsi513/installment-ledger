@@ -13,6 +13,7 @@ same default the streaming socket takes.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import Annotated, Any
 
@@ -66,7 +67,12 @@ def _guard(token: str | None, settings: Settings) -> JSONResponse | None:
             "review_token_not_configured",
             "ASSISTANT_REVIEW_TOKEN is not set, so the reviewer endpoints are closed.",
         )
-    if token != settings.review_api_token:
+    # compare_digest rather than ==, so a wrong token takes the same time to
+    # refuse whatever it contains, and the encoded bytes rather than the str so
+    # a non ASCII header cannot raise TypeError out of the comparison itself.
+    if token is None or not hmac.compare_digest(
+        token.encode("utf-8"), settings.review_api_token.encode("utf-8")
+    ):
         logger.warning("review request refused", extra={"reason": "bad_token"})
         return error_response(403, "bad_review_token", "The X-Review-Token header is wrong.")
     if not settings.review_enabled:

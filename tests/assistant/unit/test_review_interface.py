@@ -78,6 +78,19 @@ async def test_a_request_with_the_wrong_token_is_refused(api) -> None:
 
 
 @pytest.mark.anyio
+async def test_a_non_ascii_token_is_refused_rather_than_raising(api) -> None:
+    """The token is compared as encoded bytes, so this cannot raise TypeError."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api),
+        base_url="http://testserver",
+        headers={"X-Review-Token": "token-with-an-accent-é"},
+    ) as client:
+        response = await client.get("/review/held")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "bad_review_token"
+
+
+@pytest.mark.anyio
 async def test_with_no_token_configured_the_endpoints_are_closed(
     review_settings_offline: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
