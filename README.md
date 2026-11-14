@@ -406,11 +406,39 @@ how fast the service is.
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| `GET` | `/health` | Reports whether the database is reachable |
+| `GET` | `/health` | Reports whether the database is reachable. Never requires a key |
 | `POST` | `/loans` | Creates a loan and its schedule. Requires `Idempotency-Key` |
 | `GET` | `/loans/{id}` | Returns the loan, its schedule and its outstanding balance |
 | `POST` | `/loans/{id}/payments` | Applies a payment. Requires `Idempotency-Key` |
 | `GET` | `/loans/{id}/ledger` | Returns the ledger entries grouped by transaction |
+
+### Authentication
+
+Set `LEDGER_API_KEY` and every endpoint except `GET /health` requires that value
+in an `X-API-Key` header. Leave it unset and the API is open, which is how it
+runs locally and in CI.
+
+```bash
+curl -H "X-API-Key: $LEDGER_API_KEY" http://127.0.0.1:8000/loans/<id>
+```
+
+A missing or wrong key returns 401 in the same error envelope as everything
+else, with the code `unauthorized`. The comparison uses `hmac.compare_digest`,
+so a wrong key takes the same time to reject whatever it contains. The length of
+the supplied key still leaks, which is inherent to comparing strings of
+different sizes.
+
+`GET /health` is never gated. The container health check, the deployment smoke
+test in CI and the assistant's readiness probe all call it without credentials,
+and it reports nothing beyond whether Postgres is reachable.
+
+Set `LEDGER_ENV=production` and the service refuses to start without a key,
+rather than coming up quietly with an open API. Any other value, including
+unset, runs the open development configuration.
+
+What this is not: one shared key is reachability control, not identity. There
+are no accounts and no per loan ownership, so any caller holding the key can
+read and pay every loan. Rotating it means restarting the process.
 
 Errors all use one shape:
 
@@ -654,7 +682,10 @@ them is a secret.
 
 ## Limitations
 
-* No authentication or authorization. Every caller can read and pay every loan.
+* Authentication is a single shared API key, and there is no authorization.
+  A caller that holds the key can read and pay every loan; there are no
+  accounts, no roles and no per loan ownership. With `LEDGER_API_KEY` unset
+  the API is open, which is the local development default.
 * No real payment processor. A payment is simply asserted by the caller, and
   the `cash` account records that assertion. Nothing settles, nothing clears
   and nothing can be reversed.

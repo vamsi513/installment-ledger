@@ -6,17 +6,29 @@ Every error, including validation failures, leaves through the same envelope:
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .api.routes import router
+from .api.routes import public_router, router
+from .auth import require_api_key, verify_production_config
 from .errors import ApiError
 from .logging_setup import REQUEST_ID_HEADER, RequestLogMiddleware, configure_logging
 
 configure_logging()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    verify_production_config()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="installment-ledger",
     version="0.1.0",
     summary="A loan and payments API with an enforced double entry ledger.",
@@ -28,11 +40,16 @@ app = FastAPI(
         "Errors all share one envelope: "
         '`{"error": {"code": ..., "message": ..., "details": {...}}}`. '
         "The `code` is stable and safe to branch on; the `message` is for humans.\n\n"
-        "No authentication, no real money, and no benchmark. See the repository README."
+        "Every endpoint except `GET /health` requires an `X-API-Key` header when "
+        "`LEDGER_API_KEY` is set. With that variable unset the API is open, which is the "
+        "local development default; `LEDGER_ENV=production` without a key stops the "
+        "service from starting.\n\n"
+        "No real money and no benchmark. See the repository README."
     ),
 )
 app.add_middleware(RequestLogMiddleware)
-app.include_router(router)
+app.include_router(public_router)
+app.include_router(router, dependencies=[Depends(require_api_key)])
 
 
 @app.exception_handler(ApiError)

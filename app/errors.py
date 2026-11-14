@@ -48,3 +48,8 @@ class IdempotencyKeyConflict(ApiError):
 class IdempotencyRequestInFlight(ApiError):
     status_code = 409
     code = "idempotency_request_in_flight"
+
+
+class Unauthorized(ApiError):
+    status_code = 401
+    code = "unauthorized"
