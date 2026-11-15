@@ -52,3 +52,45 @@ jobs:
 
       - name: Test
         run: pytest
+
+  # The front end is part of this deliverable, not an optional extra like the
+  # assistant, so it is a job here rather than a workflow of its own. It
+  # declares no `services`: the component tests drive a stub client, so they
+  # need neither Postgres nor a running API, and they make no network calls.
+  # The `test` job above is untouched and stays exactly as fast as it was.
+  frontend:
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          # Pinned exactly, like the Python and Postgres versions above. jsdom
+          # requires ^22.22.2 || ^24.15.0 || >=26.0.0, so this floor is not
+          # arbitrary.
+          node-version: "24.22.3"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install pinned dependencies
+        # `npm ci` installs package-lock.json exactly and fails if the lock and
+        # package.json disagree, which is what `pip install -r` gives the job
+        # above.
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
