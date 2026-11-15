@@ -60,7 +60,34 @@ erDiagram
         int response_status
         json response_body
     }
+    outbox_events {
+        uuid id PK
+        uuid event_id UK
+        text event_type
+        uuid aggregate_id
+        uuid transaction_id
+        json payload
+        int attempts
+        timestamptz published_at
+    }
+    processed_events {
+        uuid id PK
+        text consumer
+        uuid event_id
+        timestamptz processed_at
+    }
+    account_totals {
+        text account PK
+        bigint debit_cents
+        bigint credit_cents
+    }
 ```
+
+`outbox_events`, `processed_events` and `account_totals` belong to the event
+flow and are described under [Asynchronous events](#asynchronous-events). They
+are deliberately not joined to the tables above: the outbox row references a
+transaction by id rather than by foreign key, so publishing never takes a lock
+on a loan.
 
 ## Invariants, and where each one is enforced
 
@@ -77,6 +104,8 @@ database. Anything enforced in the database cannot.
 | A payment never exceeds the outstanding balance | application, under a row lock | `app/services/payments.py`, with `SELECT ... FOR UPDATE` on the loan |
 | Two concurrent payments cannot interleave on one loan | **database row lock** | `SELECT ... FOR UPDATE`, verified in `tests/test_concurrency.py` with real threads |
 | No installment is paid beyond its amount, or below zero | application | `app/services/payments.py`, asserted after a 24 thread storm in `tests/test_concurrency.py` |
+| An event exists if and only if its ledger transaction committed | **database transaction** | the `outbox_events` row is written on the posting session in `app/ledger.py::post`, verified both ways in `tests/test_events.py` |
+| One event changes the read model at most once per consumer | **database unique index** | unique index on `(consumer, event_id)` in `processed_events`, so a redelivery cannot apply twice |
 
 ## What idempotency does and does not guarantee
 
@@ -174,8 +203,9 @@ docker compose up -d --build
 bash scripts/demo.sh
 ```
 
-That builds the API image, starts Postgres 18.6, runs the migration and serves
-on `http://127.0.0.1:8000`. No `.env` and no secrets are involved.
+That builds the API image, starts Postgres 18.6 and RabbitMQ 4.1.8, runs the
+migration, serves on `http://127.0.0.1:8000`, and starts the event publisher
+and consumer alongside it. No `.env` and no secrets are involved.
 
 `scripts/demo.sh` then walks the whole API and prints what came back: it creates
 a loan, checks the installments sum exactly to the total, takes a payment,
@@ -290,10 +320,25 @@ The tests need a real Postgres. They run the migration themselves and clear the
 tables between tests, and the concurrency tests start a uvicorn server in a
 background thread and drive it from real OS threads over HTTP.
 
+The RabbitMQ integration tests additionally need a reachable broker, and skip
+themselves with a reason when there is not one. `docker compose up -d` starts
+both, so the command below runs everything:
+
 ```bash
 docker compose up -d
 .venv/bin/pytest
 ```
+
+Postgres alone is enough for every other test, and the suite stays green
+without a broker:
+
+```bash
+docker compose up -d postgres
+.venv/bin/pytest -rs
+```
+
+`-rs` prints the skip reason, so a run that covered less says so rather than
+looking identical to one that covered everything.
 
 To run exactly what CI runs, from a clean export of `HEAD` in a throwaway
 virtualenv with the pinned dependencies:
@@ -304,8 +349,26 @@ bash scripts/clean_export_check.sh
 
 ### What the suite covers
 
-256 tests. Alongside the example based tests:
+288 tests with a broker running, 275 without: the 13 RabbitMQ integration
+tests skip themselves when there is none. Alongside the example based tests:
 
+* **19 event tests** (`tests/test_events.py`) cover the outbox and the worker
+  against real Postgres: that the outbox row exists if and only if the posting
+  transaction committed, in both directions; that a publisher which dies before
+  publishing, or a broker which fails partway through a batch, loses nothing on
+  restart; that a duplicate delivery and a redelivered unacked message both
+  leave the read model byte for byte unchanged; and that four kinds of poison
+  message reach the dead letter queue after exactly the configured number of
+  attempts, without touching the read model. The broker here is a double behind
+  the `Broker` interface, so these run offline.
+* **13 RabbitMQ integration tests** (`tests/test_rabbit_integration.py`) drive
+  the real adapter against a real broker: queue and dead-letter-exchange
+  declaration, publish and consume, ack, a rejected message dead lettered by
+  RabbitMQ's own routing, redelivery after an unacked consumer disconnects, and
+  the production publisher and consumer running end to end over real Postgres
+  and real RabbitMQ together. They skip cleanly without a broker, and CI fails
+  the job if they skip. See
+  [What the event tests cover, and what they do not](#what-the-event-tests-cover-and-what-they-do-not).
 * **17 property based tests** (`tests/test_schedule_properties.py`, Hypothesis)
   assert the schedule invariants across the whole reachable input space rather
   than at chosen points: that installments always sum to the total, that no two
@@ -322,9 +385,11 @@ bash scripts/clean_export_check.sh
 
 ### What was measured
 
-The suite is 256 tests and passes in about 10 seconds. That number comes from
-the clean export run described above, against an empty database, on this
-machine and setup:
+The suite is 288 tests with a broker running. The timing below was measured
+when it was 256 tests, before any of the event tests existed, and has **not**
+been re-measured since, so treat it as the figure for that earlier suite rather
+than for this one. It passed in about 10 seconds, from the clean export run
+described above, against an empty database, on this machine and setup:
 
 * Apple M5 (`Mac17,2`), 10 cores, 16 GB RAM, macOS 26.6.2
 * Python 3.12.15 from Homebrew, in a fresh virtualenv
@@ -371,6 +436,222 @@ That returns a 201 with four installments of 30000 cents due on 2026-01-29,
 the same `Idempotency-Key` returns the same 201 and the same body, and does not
 create a second loan.
 
+## Asynchronous events
+
+A posted ledger transaction publishes a `transaction.posted` event, and a
+separate worker consumes it into a per account read model. The ledger's own
+behaviour is unchanged: posting rules, the balance trigger and the existing
+tables are exactly as they were, and the API never opens a broker connection.
+
+### How an event flows
+
+```
+POST /loans/{id}/payments
+         │
+         │  one database transaction (app/idempotency.py::run_once)
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  idempotency_keys   ledger_entries   payments   installments│
+│                          +                                  │
+│                    outbox_events  ← written by ledger.post  │
+│                   (published_at = NULL)                     │
+└─────────────────────────────────────────────────────────────┘
+         │
+         │  COMMIT  ─ all of it, or none of it
+         ▼
+  ┌────────────────────────────────────────┐
+  │ publisher   (python -m app.events.publisher)
+  │                                        │
+  │ 1. SELECT ... WHERE published_at IS NULL│
+  │      FOR UPDATE SKIP LOCKED            │
+  │ 2. basic_publish  ──────────────────────┼──▶ RabbitMQ
+  │ 3. SET published_at = now(), COMMIT     │    ledger.transaction.posted
+  └────────────────────────────────────────┘             │
+                                                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ consumer   (python -m app.events.consumer)               │
+  │                                                          │
+  │   one database transaction:                              │
+  │     INSERT processed_events (consumer, event_id)         │
+  │        └─ unique violation ⇒ duplicate ⇒ roll back, ack  │
+  │     UPSERT account_totals  (debit_cents, credit_cents)   │
+  │                                                          │
+  │   handler raised, max_attempts times?                    │
+  │        └──────────────────────────────▶ ledger.transaction.posted.dlq
+  └──────────────────────────────────────────────────────────┘
+```
+
+Three tables are new and no existing table changed:
+
+| Table | What it holds |
+| --- | --- |
+| `outbox_events` | Events awaiting publication. `published_at IS NULL` means unsent |
+| `processed_events` | One row per `(consumer, event_id)`, under a unique index |
+| `account_totals` | The read model: debits and credits per ledger account |
+
+### Why RabbitMQ and not Kafka
+
+The dead letter queue this design needs is a native RabbitMQ concept and has to
+be assembled by hand on Kafka. `pika` is pure Python with no dependencies of
+its own, so it adds one line to a fully pinned `requirements.txt` rather than a
+compiled wheel. And one broker container is a smaller operational commitment
+than a Kafka cluster for a low volume stream of business events: nothing here
+needs a partitioned, replayable log, and because the consumer is idempotent and
+the read model is commutative, per key ordering would buy nothing either.
+
+### The delivery guarantee
+
+**At least once, with idempotent consumers.** Not exactly once. Exactly once is
+not achieved here and is not achievable this way, because publishing to the
+broker and recording that fact in Postgres are two separate systems with no
+shared transaction.
+
+What the outbox does buy is that the failure always falls towards duplication
+rather than loss. A row is recorded as sent only by a transaction that commits
+*after* the broker has already accepted the message, so:
+
+* the publisher dies before publishing — the row is still unsent, and the next
+  pass sends it;
+* the publisher dies after the broker accepted but before the commit — the
+  message is out there, the row still reads unsent, and it is sent again;
+* the broker fails partway through a batch — the rows it already accepted roll
+  back unsent and are sent again;
+* the consumer dies holding an unacked delivery — RabbitMQ redelivers it.
+
+Every one of those produces a duplicate, and none of them loses an event. The
+consumer absorbs the duplicates with a unique index on
+`(consumer, event_id)`: the marker row and the read model update are one
+transaction, so a redelivery hits the index, the transaction rolls back whole,
+and the totals are left exactly as they were. That is why the read model is
+kept as separate `debit_cents` and `credit_cents` running totals, which can be
+checked against the ledger itself, rather than as a net that would be
+impossible to audit after a replay.
+
+`processed_events` is keyed per consumer, so a second consumer with a different
+`EVENTS_CONSUMER_NAME` sees every event once on its own marker, while two
+processes sharing a name cooperate and handle each event once between them.
+
+Nothing here expires. `outbox_events` and `processed_events` grow without
+bound and have no cleanup job, exactly like `idempotency_keys`.
+
+### Running the workers
+
+With compose, both workers start with everything else and need no arguments:
+
+```bash
+docker compose up -d --build
+```
+
+That brings up Postgres, RabbitMQ, the API, the publisher and the consumer. The
+RabbitMQ management UI is on `http://127.0.0.1:15672` with `guest`/`guest`,
+which is the quickest way to look at the dead letter queue by hand.
+
+To run either worker outside Docker, against the compose Postgres and broker:
+
+```bash
+docker compose up -d postgres rabbitmq
+```
+
+```bash
+EVENTS_BROKER_URL=amqp://guest:guest@localhost:5672/ .venv/bin/python -m app.events.publisher
+```
+
+```bash
+EVENTS_BROKER_URL=amqp://guest:guest@localhost:5672/ .venv/bin/python -m app.events.consumer
+```
+
+Both run until interrupted and shut down on `SIGINT` or `SIGTERM`. Both are
+safe to run more than once: the publisher claims rows with `SKIP LOCKED` and
+the consumer is guarded by the unique index.
+
+To watch the read model fill while payments are made:
+
+```bash
+psql postgresql://ledger:ledger@localhost:5433/ledger -c 'TABLE account_totals'
+```
+
+Because every event describes a balanced transaction, the read model nets to
+zero once it has caught up, which is the cheapest check that it is not drifting:
+
+```bash
+psql postgresql://ledger:ledger@localhost:5433/ledger \
+  -c 'SELECT SUM(debit_cents - credit_cents) AS net FROM account_totals'
+```
+
+### What the event tests cover, and what they do not
+
+The tests come in two layers, and the split is deliberate.
+
+**`tests/test_events.py` (19 tests)** drives the publisher and the consumer
+against real Postgres and the in-memory `InMemoryBroker` double. Real Postgres
+because the guarantees being tested are database guarantees — the outbox row
+sharing the posting transaction, and the unique index that makes a redelivery a
+no-op — and neither can be demonstrated against a stand-in. The double because
+these tests are about the logic above the broker seam, and they run offline, in
+a fraction of a second, with no container.
+
+**`tests/test_rabbit_integration.py` (13 tests)** drives the real
+`RabbitBroker` against a real RabbitMQ. It skips itself, at module level and
+with a reason, when no broker is reachable or `pika` is absent, so a developer
+without Docker still gets a green suite. CI has a `rabbitmq:4.1.8-management`
+service — the same pinned tag as `docker-compose.yml` — so it runs there, and
+a CI step fails the job if the module skips, because a silent skip would
+otherwise look exactly like a pass.
+
+What the integration tests now verify against a live broker:
+
+* queue and dead-letter queue declaration, including that the main queue really
+  does carry the `x-dead-letter-exchange` arguments, asserted by re-declaring
+  with the same arguments — the same equivalence check the broker applies to
+  this service on every startup;
+* publish then consume, with the bytes and the message id surviving unchanged;
+* ack, including that an acked message is not redelivered to a fresh connection;
+* **a rejected message reaching the dead letter queue by RabbitMQ's own
+  routing**, which is the path the declaration sets up and the consumer does
+  not take;
+* requeue as distinct from dead lettering, and the broker's `redelivered` flag
+  going from false to true;
+* **redelivery after an unacked consumer disconnects** — a real connection
+  dropped while holding a delivery, rather than the double's model of it;
+* the production `publish_pending` and `handle_once` running end to end over
+  real Postgres and real RabbitMQ together, including a genuine redelivery
+  leaving the read model untouched.
+
+What is still not covered:
+
+* **No throughput or latency figure was measured**, for the publisher, the
+  consumer or the broker. This README makes no claim about any of them.
+* **The worker entry points `main()` are not tested.** `python -m
+  app.events.publisher` and `python -m app.events.consumer` are marked
+  `pragma: no cover`: the signal handling, the `basicConfig` call and the
+  `run` loop's own exception path are exercised by hand, not by a test.
+* **A broker that fails mid-operation is not tested.** The tests cover a
+  broker that is absent and a connection that drops between operations, not
+  one that dies during a publish or goes into flow control under load.
+* **Nothing tests more than one publisher or consumer at once against the real
+  broker.** `SKIP LOCKED` and the per-consumer marker are tested for
+  correctness in `tests/test_events.py`, but not under genuine concurrent
+  workers on real infrastructure.
+* **The compose stack is not started by any test.** That the `publisher` and
+  `consumer` services come up, find each other and survive a restart is
+  checked by hand, not in CI.
+
+### Configuration
+
+Every setting is read from the environment with a working default, and none of
+them is a secret.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `EVENTS_BROKER_URL` | `amqp://guest:guest@localhost:5672/` | Where RabbitMQ is |
+| `EVENTS_QUEUE` | `ledger.transaction.posted` | Queue the events go to |
+| `EVENTS_DEAD_LETTER_QUEUE` | `ledger.transaction.posted.dlq` | Where a message goes once the consumer gives up |
+| `EVENTS_CONSUMER_NAME` | `account-totals` | Identity in `processed_events` |
+| `EVENTS_MAX_ATTEMPTS` | `3` | Handling attempts before dead lettering |
+| `EVENTS_BATCH_SIZE` | `100` | Outbox rows claimed per publisher transaction |
+| `EVENTS_POLL_SECONDS` | `1.0` | Wait before looking for work again |
+| `EVENTS_RETRY_BACKOFF_SECONDS` | `0.1` | Pause between handling attempts |
+
 ## Limitations
 
 * No authentication or authorization. Every caller can read and pay every loan.
@@ -392,6 +673,23 @@ create a second loan.
   `X-Request-ID` when present and generated otherwise, and echoed back on the
   response.
 * Idempotency keys are kept forever. There is no expiry and no cleanup job.
+* Event delivery is at least once, never exactly once, so a consumer that is
+  not idempotent will double count. The one consumer here is idempotent under a
+  unique index; a second one would have to be written the same way.
+* `outbox_events` and `processed_events` grow without bound, like the
+  idempotency keys, with no archival or cleanup job.
+* The read model is eventually consistent and there is no endpoint that serves
+  it. `account_totals` is readable only in the database, and it lags posting by
+  however long the publisher and consumer take to catch up.
+* The publisher polls on a timer rather than being woken by the commit, so an
+  event waits up to `EVENTS_POLL_SECONDS` before it is published even when the
+  system is otherwise idle.
+* A dead lettered message is left on the dead letter queue. Nothing retries it,
+  alerts on it or reports its depth, and replaying one is a manual job.
+* The event tests that need a real broker skip themselves when none is
+  reachable, so a local run without Docker proves less than CI does. What each
+  layer does and does not establish is set out under
+  [What the event tests cover, and what they do not](#what-the-event-tests-cover-and-what-they-do-not).
 
 ## Payments assistant
 

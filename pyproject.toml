@@ -68,3 +68,13 @@ follow_imports = "silent"
 module = ["langgraph.*", "langchain_core.*"]
 ignore_missing_imports = true
 follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+# pika ships no py.typed marker, so there is nothing for mypy to read. This
+# changes nothing about the gate as configured, because `files` above is the
+# assistant package alone and pika is only imported by app/events/rabbit.py.
+# It is here so that type checking app/events by hand, or widening `files`
+# later, reports real problems rather than one missing stub.
+module = ["pika.*"]
+ignore_missing_imports = true
+follow_imports = "silent"
