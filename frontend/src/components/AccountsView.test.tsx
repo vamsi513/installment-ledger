@@ -68,8 +68,12 @@ describe("AccountsView", () => {
       />,
     );
 
+    // The row renders its loan id in all three states, so findByRole("row")
+    // matches while the row still shows "Loading this loan…". Wait for a cell
+    // that exists only once the loan has loaded, rather than for the row.
+    // The four cells arrive in one commit, so the rest are there with it.
     const row = await screen.findByRole("row", { name: new RegExp(LOAN_ID, "i") });
-    expect(within(row).getByText("$1,200.00")).toBeInTheDocument();
+    expect(await within(row).findByText("$1,200.00")).toBeInTheDocument();
     expect(within(row).getByText("$300.00")).toBeInTheDocument();
     expect(within(row).getByText("$900.00")).toBeInTheDocument();
     expect(within(row).getByText("open")).toBeInTheDocument();
@@ -94,11 +98,13 @@ describe("AccountsView", () => {
       />,
     );
 
+    // Same race as above, in both rows: each row exists before its own
+    // request settles, so wait for the settled content inside it.
     const goodRow = await screen.findByRole("row", { name: new RegExp(LOAN_ID, "i") });
-    expect(within(goodRow).getByText("$900.00")).toBeInTheDocument();
+    expect(await within(goodRow).findByText("$900.00")).toBeInTheDocument();
 
     const badRow = await screen.findByRole("row", { name: new RegExp(SECOND_LOAN_ID, "i") });
-    const alert = within(badRow).getByRole("alert");
+    const alert = await within(badRow).findByRole("alert");
     expect(alert).toHaveTextContent("This loan could not be loaded");
     expect(alert).toHaveTextContent("No loan with that id.");
     expect(alert).toHaveTextContent("loan_not_found");
