@@ -245,10 +245,25 @@ The tests need a real Postgres. They run the migration themselves and clear the
 tables between tests, and the concurrency tests start a uvicorn server in a
 background thread and drive it from real OS threads over HTTP.
 
+The RabbitMQ integration tests additionally need a reachable broker, and skip
+themselves with a reason when there is not one. `docker compose up -d` starts
+both, so the command below runs everything:
+
 ```bash
 docker compose up -d
 .venv/bin/pytest
 ```
+
+Postgres alone is enough for every other test, and the suite stays green
+without a broker:
+
+```bash
+docker compose up -d postgres
+.venv/bin/pytest -rs
+```
+
+`-rs` prints the skip reason, so a run that covered less says so rather than
+looking identical to one that covered everything.
 
 To run exactly what CI runs, from a clean export of `HEAD` in a throwaway
 virtualenv with the pinned dependencies:
@@ -259,7 +274,8 @@ bash scripts/clean_export_check.sh
 
 ### What the suite covers
 
-275 tests. Alongside the example based tests:
+288 tests with a broker running, 275 without: the 13 RabbitMQ integration
+tests skip themselves when there is none. Alongside the example based tests:
 
 * **19 event tests** (`tests/test_events.py`) cover the outbox and the worker
   against real Postgres: that the outbox row exists if and only if the posting
@@ -268,9 +284,16 @@ bash scripts/clean_export_check.sh
   restart; that a duplicate delivery and a redelivered unacked message both
   leave the read model byte for byte unchanged; and that four kinds of poison
   message reach the dead letter queue after exactly the configured number of
-  attempts, without touching the read model. The broker is a double behind the
-  `Broker` interface, for the reason given under
-  [What the event tests do not cover](#what-the-event-tests-do-not-cover).
+  attempts, without touching the read model. The broker here is a double behind
+  the `Broker` interface, so these run offline.
+* **13 RabbitMQ integration tests** (`tests/test_rabbit_integration.py`) drive
+  the real adapter against a real broker: queue and dead-letter-exchange
+  declaration, publish and consume, ack, a rejected message dead lettered by
+  RabbitMQ's own routing, redelivery after an unacked consumer disconnects, and
+  the production publisher and consumer running end to end over real Postgres
+  and real RabbitMQ together. They skip cleanly without a broker, and CI fails
+  the job if they skip. See
+  [What the event tests cover, and what they do not](#what-the-event-tests-cover-and-what-they-do-not).
 * **17 property based tests** (`tests/test_schedule_properties.py`, Hypothesis)
   assert the schedule invariants across the whole reachable input space rather
   than at chosen points: that installments always sum to the total, that no two
@@ -287,11 +310,11 @@ bash scripts/clean_export_check.sh
 
 ### What was measured
 
-The suite is 275 tests. The timing below was measured when it was 256 tests,
-before the event tests were added, and has **not** been re-measured since, so
-treat it as the figure for that earlier suite rather than for this one. It
-passed in about 10 seconds, from the clean export run described above, against
-an empty database, on this machine and setup:
+The suite is 288 tests with a broker running. The timing below was measured
+when it was 256 tests, before any of the event tests existed, and has **not**
+been re-measured since, so treat it as the figure for that earlier suite rather
+than for this one. It passed in about 10 seconds, from the clean export run
+described above, against an empty database, on this machine and setup:
 
 * Apple M5 (`Mac17,2`), 10 cores, 16 GB RAM, macOS 26.6.2
 * Python 3.12.15 from Homebrew, in a fresh virtualenv
@@ -480,40 +503,63 @@ psql postgresql://ledger:ledger@localhost:5433/ledger \
   -c 'SELECT SUM(debit_cents - credit_cents) AS net FROM account_totals'
 ```
 
-### What the event tests do not cover
+### What the event tests cover, and what they do not
 
-The event tests use real Postgres, because the guarantees being tested are
-database guarantees: the outbox row sharing the posting transaction, and the
-unique index that makes a redelivery a no-op. Neither can be demonstrated
-against a stand-in.
+The tests come in two layers, and the split is deliberate.
 
-The broker, though, is the in-memory `InMemoryBroker` double, not RabbitMQ.
-There was no broker in this repo before this change and so no container for the
-tests to reuse, and the double sits behind the same `Broker` interface
-`RabbitBroker` implements, so the publisher and the consumer under test are the
-same code either way. What that leaves unverified is worth being explicit
-about, because it is not nothing:
+**`tests/test_events.py` (19 tests)** drives the publisher and the consumer
+against real Postgres and the in-memory `InMemoryBroker` double. Real Postgres
+because the guarantees being tested are database guarantees — the outbox row
+sharing the posting transaction, and the unique index that makes a redelivery a
+no-op — and neither can be demonstrated against a stand-in. The double because
+these tests are about the logic above the broker seam, and they run offline, in
+a fraction of a second, with no container.
 
-* **`app/events/rabbit.py` has never been run against a live broker.** The
-  queue and dead-letter-exchange declarations, the `basic_get` polling, the
-  delivery-tag acking and the AMQP URL handling are all untested. The module is
-  structured so that a mistake there cannot affect the ledger or the tests —
-  `pika` is imported inside the constructor, so nothing else even loads it —
-  but that is isolation, not verification.
-* **Redelivery is modelled, not observed.** `InMemoryBroker.requeue_unacked`
-  returns unacked messages the way a broker does when a consumer dies, and the
-  consumer is tested against that. Whether RabbitMQ's real redelivery timing
-  and `prefetch_count` behaviour match that model is not shown here.
-* **The dead letter queue is asserted as an explicit republish**, which is the
-  path that works identically against both adapters. The `x-dead-letter-exchange`
-  argument on the real queue is a second, independent route to the same place,
-  and it is not exercised.
+**`tests/test_rabbit_integration.py` (13 tests)** drives the real
+`RabbitBroker` against a real RabbitMQ. It skips itself, at module level and
+with a reason, when no broker is reachable or `pika` is absent, so a developer
+without Docker still gets a green suite. CI has a `rabbitmq:4.1.8-management`
+service — the same pinned tag as `docker-compose.yml` — so it runs there, and
+a CI step fails the job if the module skips, because a silent skip would
+otherwise look exactly like a pass.
+
+What the integration tests now verify against a live broker:
+
+* queue and dead-letter queue declaration, including that the main queue really
+  does carry the `x-dead-letter-exchange` arguments, asserted by re-declaring
+  with the same arguments — the same equivalence check the broker applies to
+  this service on every startup;
+* publish then consume, with the bytes and the message id surviving unchanged;
+* ack, including that an acked message is not redelivered to a fresh connection;
+* **a rejected message reaching the dead letter queue by RabbitMQ's own
+  routing**, which is the path the declaration sets up and the consumer does
+  not take;
+* requeue as distinct from dead lettering, and the broker's `redelivered` flag
+  going from false to true;
+* **redelivery after an unacked consumer disconnects** — a real connection
+  dropped while holding a delivery, rather than the double's model of it;
+* the production `publish_pending` and `handle_once` running end to end over
+  real Postgres and real RabbitMQ together, including a genuine redelivery
+  leaving the read model untouched.
+
+What is still not covered:
+
 * **No throughput or latency figure was measured**, for the publisher, the
-  consumer or the broker. The README makes no claim about any of them.
-
-Closing that gap means a RabbitMQ container in CI and a test that drives
-`RabbitBroker` against it, in the same spirit as the existing Postgres-backed
-tests. It is the obvious next piece of work on this and it has not been done.
+  consumer or the broker. This README makes no claim about any of them.
+* **The worker entry points `main()` are not tested.** `python -m
+  app.events.publisher` and `python -m app.events.consumer` are marked
+  `pragma: no cover`: the signal handling, the `basicConfig` call and the
+  `run` loop's own exception path are exercised by hand, not by a test.
+* **A broker that fails mid-operation is not tested.** The tests cover a
+  broker that is absent and a connection that drops between operations, not
+  one that dies during a publish or goes into flow control under load.
+* **Nothing tests more than one publisher or consumer at once against the real
+  broker.** `SKIP LOCKED` and the per-consumer marker are tested for
+  correctness in `tests/test_events.py`, but not under genuine concurrent
+  workers on real infrastructure.
+* **The compose stack is not started by any test.** That the `publisher` and
+  `consumer` services come up, find each other and survive a restart is
+  checked by hand, not in CI.
 
 ### Configuration
 
@@ -565,8 +611,10 @@ them is a secret.
   system is otherwise idle.
 * A dead lettered message is left on the dead letter queue. Nothing retries it,
   alerts on it or reports its depth, and replaying one is a manual job.
-* `app/events/rabbit.py` is not covered by the test suite, for the reasons set
-  out under [What the event tests do not cover](#what-the-event-tests-do-not-cover).
+* The event tests that need a real broker skip themselves when none is
+  reachable, so a local run without Docker proves less than CI does. What each
+  layer does and does not establish is set out under
+  [What the event tests cover, and what they do not](#what-the-event-tests-cover-and-what-they-do-not).
 
 ## Payments assistant
 

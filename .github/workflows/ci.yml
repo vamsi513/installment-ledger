@@ -23,8 +23,22 @@ jobs:
           --health-timeout 3s
           --health-retries 30
 
+      # Same pinned tag as docker-compose.yml, so CI and a local run exercise
+      # the same broker. Without this service tests/test_rabbit_integration.py
+      # skips itself, which is exactly the hole this service closes.
+      rabbitmq:
+        image: rabbitmq:4.1.8-management
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 20
+
     env:
       DATABASE_URL: postgresql+psycopg://ledger:ledger@localhost:5432/ledger
+      EVENTS_BROKER_URL: amqp://guest:guest@localhost:5672/
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -50,5 +64,35 @@ jobs:
           alembic downgrade base
           alembic upgrade head
 
+      - name: Confirm the broker is reachable
+        # A skipped integration module still reports a green suite, so assert
+        # the broker is there rather than discovering months later that these
+        # tests have been skipping in CI all along.
+        run: |
+          python - <<'EOF'
+          import os, sys, pika
+          url = os.environ["EVENTS_BROKER_URL"]
+          parameters = pika.URLParameters(url)
+          parameters.socket_timeout = 5
+          parameters.connection_attempts = 10
+          parameters.retry_delay = 2
+          try:
+              pika.BlockingConnection(parameters).close()
+          except Exception as exc:
+              sys.exit(f"no broker at {url}: {type(exc).__name__}: {exc}")
+          print(f"broker reachable at {url}")
+          EOF
+
       - name: Test
         run: pytest
+
+      - name: Confirm the RabbitMQ integration tests actually ran
+        # `pytest` above stays green if the module skips itself, so a broken
+        # broker service would look like a pass. Fail the job instead.
+        run: |
+          output="$(pytest tests/test_rabbit_integration.py -q --no-header -rs)"
+          echo "$output"
+          if echo "$output" | grep -q skipped; then
+            echo "::error::the RabbitMQ integration tests skipped; the broker service was not reached"
+            exit 1
+          fi

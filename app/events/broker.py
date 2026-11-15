@@ -26,11 +26,19 @@ class Message:
     delivery tag for RabbitMQ, the message itself for the double. It is
     excluded from equality and from the repr so two messages compare by their
     id and bytes, which is what a test wants to assert on.
+
+    ``redelivered`` is what the broker says about this delivery: true means it
+    has been handed out before and not acked. It is informational only, and
+    nothing in the consumer branches on it — idempotency rests on the unique
+    index, which holds whether or not the broker tells the truth about this
+    flag. It is excluded from equality for the same reason as ``handle``: it
+    describes the delivery, not the message.
     """
 
     message_id: str
     body: bytes
     handle: object | None = field(default=None, compare=False, repr=False)
+    redelivered: bool = field(default=False, compare=False, repr=False)
 
 
 class Broker(Protocol):
