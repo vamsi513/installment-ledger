@@ -239,6 +239,81 @@ python3.12 -m venv .venv
 
 The service then answers on `http://127.0.0.1:8000`.
 
+## Browser front end
+
+A React and TypeScript front end lives in `frontend/`. It has three views: the
+accounts list with balances, the ledger entries for one loan, and a form that
+posts a payment. There is no UI library and no router: `react` and `react-dom`
+are the only runtime dependencies.
+
+Amounts are shown in dollars and sent to the API as integer cents. Nothing in
+the browser holds money as a fraction: both conversions live in
+`frontend/src/lib/money.ts`, each works on integers and strings alone, and a
+dollar string with more than two decimal places is refused rather than
+rounded.
+
+The payment form generates one `Idempotency-Key` per submitted attempt and
+cannot post again while the first attempt is in flight, so a repeated click
+cannot create a second payment. A key the service has already seen is reported
+as a duplicate rather than as a validation failure, because it means the
+opposite: the first attempt was kept.
+
+`frontend/src/api/types.ts` mirrors `app/schemas.py` and `app/presenters.py` by
+hand rather than by code generation, and each type names the backend
+definition it follows.
+
+### Running the API and the front end together
+
+Two terminals. The API first, as above:
+
+```bash
+docker compose up -d
+```
+
+Then the front end:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The front end serves on `http://127.0.0.1:5173` and proxies `/api` to the API
+on `http://127.0.0.1:8000`. The proxy is there because the service sends no
+CORS headers: going through it keeps the browser same origin, so the API needs
+no change for a browser to call it. Set `VITE_API_PROXY_TARGET` if the API is
+not on port 8000, or `VITE_API_BASE_URL` to point a built front end at an API
+on another origin.
+
+The service has no endpoint that lists loans, so the accounts view cannot
+discover them. Create a loan and hand the front end its id:
+
+```bash
+curl -X POST http://127.0.0.1:8000/loans \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-loan-1' \
+  -d '{"principal_cents":120000,"apr_bps":0,"installment_count":4,"cadence":"biweekly","start_date":"2026-01-15"}'
+```
+
+Paste the `id` from that response into "Follow a loan" on the accounts view.
+The browser remembers the ids it has been given, in `localStorage`, but every
+balance on screen still comes from `GET /loans/{id}`: the list is a
+convenience and never a source of truth.
+
+### Front end checks
+
+```bash
+cd frontend
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+`ci.yml` runs the same four in a `frontend` job, which needs no database for
+the reason above: the component tests drive a stub client rather than a
+server.
+
 ## Running tests
 
 The tests need a real Postgres. They run the migration themselves and clear the
