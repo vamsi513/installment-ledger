@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -177,3 +178,93 @@ class IdempotencyKey(Base):
     response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OutboxEvent(Base):
+    """An event waiting to be published, written in the posting transaction.
+
+    This is the transactional outbox. The row is inserted on the same session
+    and therefore in the same database transaction as the ledger entries it
+    describes, so the event exists if and only if the transaction committed.
+    No broker is touched while that transaction is open.
+
+    ``published_at`` is the only mutable column: null means unsent. The
+    publisher sets it *after* the broker has accepted the message, so a crash
+    between those two steps leaves the row unsent and it is published again on
+    restart. That is what makes delivery at least once rather than at most
+    once, and it is why the consumer has to be idempotent.
+    """
+
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        CheckConstraint("attempts >= 0", name="ck_outbox_attempts_non_negative"),
+        Index("uq_outbox_events_event_id", "event_id", unique=True),
+        # The publisher's only query is "oldest unsent rows first", so the
+        # index is partial on exactly those rows.
+        Index(
+            "ix_outbox_events_unpublished",
+            "created_at",
+            postgresql_where=text("published_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, default=uuid.uuid4)
+    event_type: Mapped[str] = mapped_column(Text)
+    aggregate_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    payload: Mapped[dict] = mapped_column(JSON)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+
+class ProcessedEvent(Base):
+    """One row per (consumer, event) pair that has been handled.
+
+    This is what makes a duplicate delivery a no-op, and like the idempotency
+    keys it rests on a unique index rather than an application level check. The
+    consumer inserts this row in the same transaction as its read model update,
+    so a redelivered event hits the index, the transaction rolls back, and the
+    read model is left exactly as it was.
+    """
+
+    __tablename__ = "processed_events"
+    __table_args__ = (
+        Index("uq_processed_events_consumer_event", "consumer", "event_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    consumer: Mapped[str] = mapped_column(Text)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AccountTotal(Base):
+    """Per account running totals, maintained by the consumer.
+
+    A read model, not a source of truth: it is derived from the events and can
+    be rebuilt by replaying them. Debits and credits are kept separately rather
+    than as one signed net so that the pair can be checked against the ledger
+    itself, and because a running total that only ever increases is easier to
+    reason about under redelivery.
+    """
+
+    __tablename__ = "account_totals"
+    __table_args__ = (
+        CheckConstraint("debit_cents >= 0", name="ck_account_totals_debit_non_negative"),
+        CheckConstraint("credit_cents >= 0", name="ck_account_totals_credit_non_negative"),
+    )
+
+    account: Mapped[LedgerAccount] = mapped_column(
+        _pg_enum(LedgerAccount, "ledger_account"), primary_key=True
+    )
+    debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    credit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

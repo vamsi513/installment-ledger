@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from .models import EntryDirection, LedgerAccount, LedgerEntry
+from .events import schema as event_schema
+from .models import EntryDirection, LedgerAccount, LedgerEntry, OutboxEvent
 
 
 @dataclass(frozen=True)
@@ -35,11 +37,22 @@ def net_cents(postings: list[Posting]) -> int:
 
 
 def post(session: Session, *, loan_id: uuid.UUID, postings: list[Posting]) -> uuid.UUID:
-    """Write one balanced transaction and return its id.
+    """Write one balanced transaction, queue its event, and return its id.
 
     The balance check here is a fast local guard. The database enforces the same
     rule independently with a deferred constraint trigger, so an unbalanced
     transaction cannot be committed even if this function is bypassed.
+
+    The ``transaction.posted`` event is written to the outbox on this same
+    session, so it is part of this transaction and nothing else. The event
+    therefore exists if and only if the entries it describes were committed:
+    a caller that rolls back takes the event with it, and there is no window in
+    which the ledger has moved but the event is missing. No broker is contacted
+    from here, which is the point of the outbox: a posting cannot be made to
+    fail, or to wait, by a broker being down.
+
+    The posting rules themselves are unchanged. This function writes one extra
+    row and decides nothing new.
     """
     net = net_cents(postings)
     if net != 0:
@@ -57,5 +70,21 @@ def post(session: Session, *, loan_id: uuid.UUID, postings: list[Posting]) -> uu
             )
             for posting in postings
         ]
+    )
+    session.add(
+        OutboxEvent(
+            event_type=event_schema.TRANSACTION_POSTED,
+            aggregate_id=loan_id,
+            transaction_id=transaction_id,
+            payload=event_schema.build_payload(
+                loan_id=loan_id,
+                transaction_id=transaction_id,
+                occurred_at=datetime.now(UTC),
+                postings=[
+                    (posting.account.value, posting.direction.value, posting.amount_cents)
+                    for posting in postings
+                ],
+            ),
+        )
     )
     return transaction_id

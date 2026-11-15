@@ -1,6 +1,12 @@
 # Fully pinned lock, produced by pip freeze from a clean Python 3.12 resolve.
 # Direct dependencies: fastapi, uvicorn, sqlalchemy, psycopg[binary], alembic,
-# pydantic, pytest, httpx, ruff. Everything else below is a transitive pin.
+# pydantic, pytest, httpx, ruff, pika. Everything else below is a transitive pin.
+#
+# pika is the RabbitMQ client used by app/events/rabbit.py. It is pure Python
+# with no dependencies of its own, so it adds exactly one line here. The ledger
+# API does not import it and the tests do not need it: it is imported inside
+# RabbitBroker's constructor, so only the publisher and consumer processes
+# require it to be installed.
 alembic==1.20.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -17,6 +23,7 @@ Mako==1.4.3
 MarkupSafe==3.0.4
 opentelemetry-api==1.45.1
 packaging==26.3
+pika==1.3.2
 pluggy==1.6.0
 psycopg==3.3.6
 psycopg-binary==3.3.6

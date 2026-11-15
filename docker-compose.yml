@@ -1,5 +1,11 @@
-# Postgres plus the API. `docker compose up` gives a working service on :8000
-# with the schema already migrated.
+# Postgres, RabbitMQ, the API and the two event workers. `docker compose up`
+# gives a working service on :8000 with the schema already migrated and events
+# flowing from the outbox to the read model.
+#
+# Note what the api service does *not* have: an EVENTS_BROKER_URL. The API only
+# ever writes the outbox row inside its own database transaction, so it needs no
+# broker connection and a broker outage cannot make a payment fail. Only the
+# publisher and the consumer talk to RabbitMQ.
 #
 # Postgres is published on 5433 rather than 5432 so it does not collide with a
 # Postgres already installed on the host, which is also the port the default
@@ -35,3 +41,53 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+
+  rabbitmq:
+    # Pinned to an exact version, like the Postgres and Python images, so a
+    # rebuild later starts the same broker. The -management tag adds the web UI
+    # on :15672 (guest/guest), which is the quickest way to look at the dead
+    # letter queue by hand.
+    image: rabbitmq:4.1.8-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  # The publisher and the consumer are the same image as the API with a
+  # different command. Both wait for the api service to be healthy, because
+  # that is what runs `alembic upgrade head`: it means neither worker can start
+  # against a database that has no outbox table yet.
+  publisher:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@postgres:5432/ledger
+      EVENTS_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
+    command: ["python", "-m", "app.events.publisher"]
+    restart: on-failure
+
+  consumer:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://ledger:ledger@postgres:5432/ledger
+      EVENTS_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
+      EVENTS_CONSUMER_NAME: account-totals
+    command: ["python", "-m", "app.events.consumer"]
+    restart: on-failure
