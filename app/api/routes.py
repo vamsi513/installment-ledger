@@ -24,7 +24,12 @@ from ..schemas import CreateLoanRequest, CreatePaymentRequest
 from ..services.loans import create_loan, load_loan
 from ..services.payments import apply_payment
 
+# Two routers, so that authentication is the default rather than something each
+# route has to remember to ask for. Everything on `router` sits behind the API
+# key check wired up in app.main. `public_router` is the deliberate exception,
+# and a route only lands there by someone choosing to put it there.
 router = APIRouter()
+public_router = APIRouter()
 
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
@@ -35,9 +40,14 @@ def _require_key(value: str | None) -> str:
     return value.strip()
 
 
-@router.get("/health")
+@public_router.get("/health")
 def health() -> Response:
-    """Report whether the service can reach its database."""
+    """Report whether the service can reach its database.
+
+    Left unauthenticated on purpose. The container health check, the deployment
+    smoke test in CI and the assistant's readiness probe all call it without
+    credentials, and it discloses nothing beyond whether Postgres is reachable.
+    """
     with new_session() as session:
         session.execute(text("SELECT 1"))
     return JSONResponse(status_code=200, content={"status": "ok", "database": "reachable"})

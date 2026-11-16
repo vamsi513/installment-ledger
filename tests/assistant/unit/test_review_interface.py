@@ -78,6 +78,26 @@ async def test_a_request_with_the_wrong_token_is_refused(api) -> None:
 
 
 @pytest.mark.anyio
+async def test_a_non_ascii_token_is_refused_rather_than_raising(api) -> None:
+    """A header byte above 127 must refuse, not raise.
+
+    Sent as bytes because httpx encodes a str header value as strict ASCII and
+    would fail client side instead. A real client can put the byte on the wire,
+    and Starlette decodes headers as latin-1, so the guard receives a str that
+    is not ASCII. Comparing that with compare_digest as str raises TypeError and
+    would surface as a 500, which is why the comparison uses encoded bytes.
+    """
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api),
+        base_url="http://testserver",
+        headers={"X-Review-Token": "token-with-an-accent-é".encode("latin-1")},
+    ) as client:
+        response = await client.get("/review/held")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "bad_review_token"
+
+
+@pytest.mark.anyio
 async def test_with_no_token_configured_the_endpoints_are_closed(
     review_settings_offline: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
