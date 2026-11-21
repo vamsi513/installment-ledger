@@ -996,6 +996,167 @@ approved is not an audit trail, and the two have different audiences.
 * **No notifications.** A held payment sits there until somebody runs the CLI or
   calls the endpoint. Nothing tells a reviewer it is waiting.
 
+### Consent classifier
+
+An optional typed classifier that decides whether a reply to a payment proposal
+is actually consent. It exists because the confirmation rule is an exact match
+against a short allowlist, which is safe and also blunt: "sure, that sounds
+fine" is plainly agreement and the allowlist turns it down.
+
+It is **off by default**. `CONSENT_MODE=rule` means the classifier is not built,
+not called and not logged, and the assistant behaves exactly as it did before
+this existed.
+
+#### The three modes
+
+| `CONSENT_MODE` | Who decides | What the classifier does |
+|---|---|---|
+| `rule` (default) | the existing exact phrase rule | nothing, it is never called |
+| `shadow` | the existing exact phrase rule | runs alongside it, and both decisions are recorded |
+| `live` | the classifier, through the threshold | decides, with the rule as the fallback |
+
+#### What it returns, and what each answer does
+
+The model is asked for a schema, not for prose. `assistant/consent/schema.py`:
+
+```
+label                  confirm | decline | modify | unclear
+confidence             0 to 1
+modified_amount_cents  integer cents, only when label is modify
+```
+
+| Label | What happens |
+|---|---|
+| `confirm`, confidence at or above the threshold | the payment is confirmed |
+| `confirm`, confidence below it | the agent asks again, proposal still standing |
+| `modify` | a **new proposal** is prepared for the new amount |
+| `decline` | cancelled |
+| `unclear` | the agent asks again, proposal still standing |
+
+A `modify` never pays the modified amount. It becomes a fresh payment request,
+which means the cap and the positive amount rule are applied to it, it goes
+through `prepare_payment` again, and it is read back for a new confirmation. An
+amount the user said in passing cannot become a payment in one step.
+
+#### Config
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CONSENT_MODE` | `rule` | rollout flag. An unknown value is refused at startup rather than falling back to something permissive |
+| `CONSENT_THRESHOLD` | `0.85` | act on `confirm` only at or above this. **Placeholder, see below** |
+| `CONSENT_TIMEOUT_SECONDS` | `3` | how long the classifier gets before the rule decides instead |
+
+The threshold has no magic number in the logic: it is read from configuration
+and applied in one place, `_classifier_action` in `assistant/consent/gate.py`.
+
+**The default threshold is a placeholder.** It was not chosen from any
+measurement. It is a value that lets the code run until the dev sweep below has
+been run against a real model.
+
+#### Timeout, errors and the fallback
+
+A timeout, a transport failure, a refusal, or an answer that does not validate
+against the schema all collapse to one thing: the existing confirmation rule
+decides, exactly as it does today. Every one of those is recorded with which
+path decided, so a fallback is visible rather than looking like a normal
+decision. The timeout is enforced with `asyncio.wait_for` around the call rather
+than left to the SDK, so the deadline is the configured one.
+
+Two things the classifier can never do, in any mode:
+
+1. **Skip the review queue.** Review is enforced in the MCP server, in
+   `prepare_payment` and `confirm_payment`, which are downstream of every
+   decision the classifier makes. A `modify` is prepared again and is policy
+   checked like any other payment.
+2. **Override an exact cancellation.** `is_explicit_cancellation` is checked
+   before the classifier is even called, in every mode. A deterministic refusal
+   is not something a model gets a vote on.
+
+#### Where the decisions are recorded
+
+A separate append only SQLite table, `consent_decisions`, beside the state
+database, with UPDATE and DELETE rejected by triggers in the same way the review
+audit log and the ledger's balance trigger do it.
+
+It is deliberately not the review audit log. That table is written by the MCP
+server and records what happened to a pending action, with a closed set of
+actions and a status before and after. A consent decision is made in the agent
+process, changes no action status, and has fields worth querying: the label, the
+confidence, the threshold in force, which path decided, and whether the two
+decisions agreed. Those belong in typed columns, not flattened into a free text
+`reason`.
+
+The reply text is stored in full, for the same reason the review audit log
+stores loan ids in full while the log stream redacts them: a consent trail that
+cannot show what was taken as consent is not a consent trail. So this database
+holds user text and belongs wherever the review audit database belongs.
+
+#### The labelled replies
+
+`evals/consent/replies.jsonl`, one object per line:
+
+```json
+{"id": "confirm-bare-yes", "proposal": {"amount_cents": 12500, "payee": "loan 7f3a",
+ "installment": "installment 3"}, "reply": "yes", "gold_label": "confirm", "split": "dev"}
+```
+
+**The gold labels were written and reviewed by one person.** There is no second
+annotator and no agreement measurement, so the labels carry one person's
+reading of what each reply means.
+
+What is committed is a small set of example rows to fix the format, not a
+dataset. The target is about 80 rows, roughly 50 `dev` and 30 `held_out`.
+
+#### Running the eval
+
+Needs nothing running: no ledger, no database, no MCP server.
+
+Offline, against the deterministic stub, which checks the harness and nothing
+else:
+
+```bash
+python evals/consent/run_eval.py --split dev --sweep
+```
+
+Against a real model. Sweep dev, pick a threshold from the table, then run
+held_out **once** at it:
+
+```bash
+OPENAI_API_KEY=... python evals/consent/run_eval.py --provider openai --split dev --sweep
+```
+
+```bash
+OPENAI_API_KEY=... python evals/consent/run_eval.py --provider openai --split held_out --threshold 0.85
+```
+
+`--sweep` refuses to run on `held_out`. A threshold chosen on the set it is then
+reported against measures nothing, so the script will not do it.
+
+Each run reports precision and recall on `confirm`, the full confusion matrix,
+the unclear rate, and counts of invalid outputs, timeouts and fallbacks. Results
+are written to `results/consent/` with the model, threshold, split, date and git
+SHA. A stub run is marked as not a model measurement and is not tracked.
+
+#### Results
+
+Not yet run against a real model. The numbers below are placeholders and the
+threshold is the unmeasured default.
+
+| Split | Rows | Model | Threshold | Confirm precision | Confirm recall | Unclear rate | Fallbacks |
+|---|---|---|---|---|---|---|---|
+| `dev` sweep | TBD | `gpt-4o-mini` | TBD | TBD | TBD | TBD | TBD |
+| `held_out` | TBD | `gpt-4o-mini` | TBD | TBD | TBD | TBD | TBD |
+
+#### What this does not establish
+
+The classifier is measured on replies written by the same person who wrote the
+flow and labelled by that person alone. That is useful against regressions and
+is not an independent assessment. Nothing here measures what happens when
+someone is actively trying to get a payment through: the adversarial rows are a
+handful somebody thought of, and the defence that matters is still structural,
+which is that a payment needs a prepared action, survives the review queue, and
+is applied once by an idempotency key the classifier never touches.
+
 ### Running it
 
 The assistant needs its own dependencies. The ledger does not.

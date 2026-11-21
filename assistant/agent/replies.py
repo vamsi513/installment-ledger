@@ -57,6 +57,13 @@ REFUSAL_REPLIES: dict[str, str] = {
         "There is nothing waiting to be confirmed. Tell me an amount and I will prepare "
         "a payment for you to confirm."
     ),
+    # Used when the consent classifier could not read a reply as agreement, or
+    # was not confident enough about it. The payment is still waiting, so this
+    # asks rather than cancelling.
+    "consent_unclear": (
+        "I could not tell from that whether you want me to go ahead. The payment is "
+        "still waiting. Reply with 'yes' to confirm it, or 'cancel' to drop it."
+    ),
 }
 
 

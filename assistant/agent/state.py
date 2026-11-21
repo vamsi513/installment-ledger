@@ -51,6 +51,17 @@ class AgentState(TypedDict, total=False):
     pending_action_id: str | None
     pending_loan_id: str | None
     pending_amount_cents: int | None
+    #: Which installments the pending payment would cover, as shown to the user.
+    #: Carried so the consent classifier judges a reply against the proposal.
+    pending_installment: str | None
+
+    # What the consent classifier decided this turn, for the tests and the eval
+    # harness to read. All None in rule mode, where it is never called.
+    consent_action: str | None
+    consent_decided_by: str | None
+    consent_label: str | None
+    consent_confidence: float | None
+    consent_failure: str | None
 
     # Per turn results
     tool_calls: list[str]

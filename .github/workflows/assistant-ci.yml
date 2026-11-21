@@ -86,6 +86,13 @@ jobs:
           LEDGER_BASE_URL=http://127.0.0.1:8000 \
             python -m assistant.eval.run_eval --provider fake --out-dir "$RUNNER_TEMP/eval"
 
+      - name: Verify the consent eval harness against the stub
+        # Offline and needs nothing running: the classifier is called directly.
+        # --no-write so a stub run never leaves a file that reads like a score.
+        run: |
+          python evals/consent/run_eval.py --split dev --sweep --no-write
+          python evals/consent/run_eval.py --split held_out --threshold 0.85 --no-write
+
       - name: Confirm the ledger suite is untouched by the assistant
         # The assistant must not change how the ledger behaves, so the existing
         # tests are run again here with the assistant's dependencies installed.

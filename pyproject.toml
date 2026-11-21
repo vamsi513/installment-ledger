@@ -34,7 +34,7 @@ dev = [
 dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools]
-packages = ["app", "app.api", "app.services", "assistant", "assistant.agent", "assistant.api", "assistant.eval", "assistant.llm", "assistant.mcp_server"]
+packages = ["app", "app.api", "app.services", "assistant", "assistant.agent", "assistant.api", "assistant.consent", "assistant.eval", "assistant.llm", "assistant.mcp_server"]
 
 [tool.ruff]
 line-length = 100
@@ -52,7 +52,10 @@ addopts = "-q"
 # and type checking it would mean editing files the assistant has no business
 # touching.
 [tool.mypy]
-files = ["assistant"]
+# "evals" is here so the consent eval script is type checked too. It lives
+# outside the package because it is a script rather than part of the assistant,
+# and a script that is not checked is a script that rots.
+files = ["assistant", "evals"]
 python_version = "3.12"
 strict = true
 warn_unused_ignores = false

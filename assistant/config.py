@@ -28,6 +28,18 @@ DEFAULT_MAX_MESSAGE_CHARS = 2_000
 # about in a demo, not advice about where a real limit belongs. The whole feature
 # is off unless ASSISTANT_REVIEW_ENABLED says otherwise, so the assistant behaves
 # exactly as it did before this existed.
+# Consent classifier defaults. The mode is "rule" so the assistant behaves
+# exactly as it did before this existed: the classifier is not even called.
+#
+# CONSENT_THRESHOLD is a PLACEHOLDER. It has not been chosen from any
+# measurement and must not be read as one. The threshold is meant to come from
+# the dev sweep in evals/consent/run_eval.py, and until that sweep has been run
+# against a real model this number is only a value that lets the code run.
+DEFAULT_CONSENT_MODE = "rule"
+DEFAULT_CONSENT_THRESHOLD = 0.85
+DEFAULT_CONSENT_TIMEOUT_SECONDS = 3.0
+CONSENT_MODES = ("rule", "shadow", "live")
+
 DEFAULT_REVIEW_THRESHOLD_CENTS = 25_000
 DEFAULT_REVIEW_MAX_PREPARES = 3
 DEFAULT_REVIEW_WINDOW_SECONDS = 3_600
@@ -60,6 +72,28 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _consent_mode_env(name: str, default: str) -> str:
+    """Read the rollout mode, refusing anything that is not one of the three.
+
+    A typo must not quietly land on a mode nobody intended, and least of all on
+    a more permissive one than was meant.
+    """
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw not in CONSENT_MODES:
+        raise ValueError(f"{name} must be one of {', '.join(CONSENT_MODES)}, got {raw!r}")
+    return raw
+
+
+def _threshold_env(name: str, default: float) -> float:
+    """Read a threshold and insist it is a probability."""
+    value = _float_env(name, default)
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be between 0 and 1, got {value}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """Everything the assistant needs to run, resolved once."""
@@ -86,6 +120,13 @@ class Settings:
     review_window_seconds: int = DEFAULT_REVIEW_WINDOW_SECONDS
     reviewer_id: str = ""
     review_api_token: str | None = None
+
+    # Consent classifier. Appended with defaults for the same reason the review
+    # queue settings were: existing call sites stay unchanged, and the feature
+    # is inert unless it is switched on deliberately.
+    consent_mode: str = DEFAULT_CONSENT_MODE
+    consent_threshold: float = DEFAULT_CONSENT_THRESHOLD
+    consent_timeout_seconds: float = DEFAULT_CONSENT_TIMEOUT_SECONDS
 
     def require_reviewer_id(self) -> str:
         """The configured reviewer identity.
@@ -138,6 +179,11 @@ def load_settings() -> Settings:
         ),
         reviewer_id=os.environ.get("ASSISTANT_REVIEWER_ID", ""),
         review_api_token=os.environ.get("ASSISTANT_REVIEW_TOKEN") or None,
+        consent_mode=_consent_mode_env("CONSENT_MODE", DEFAULT_CONSENT_MODE),
+        consent_threshold=_threshold_env("CONSENT_THRESHOLD", DEFAULT_CONSENT_THRESHOLD),
+        consent_timeout_seconds=_float_env(
+            "CONSENT_TIMEOUT_SECONDS", DEFAULT_CONSENT_TIMEOUT_SECONDS
+        ),
     )
 
 

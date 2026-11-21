@@ -16,6 +16,7 @@ from typing import Any
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ..config import Settings, get_settings
+from ..consent import ConsentLog, ConsentModel, build_consent_log, build_consent_model
 from ..llm import LlmClient, build_llm_client
 from ..mcp_client import ToolGateway
 from ..redaction import redact_session_id
@@ -62,16 +63,29 @@ async def run_turn(
     bound_loan_ids: list[str],
     settings: Settings | None = None,
     llm: LlmClient | None = None,
+    consent_model: ConsentModel | None = None,
+    consent_log: ConsentLog | None = None,
 ) -> TurnResult:
     """Run one message through the graph and return what the user should see."""
     resolved = settings or get_settings()
     model = llm or build_llm_client(resolved)
+    # Both are None in rule mode, where the gate is never called.
+    consent = consent_model if consent_model is not None else build_consent_model(resolved)
+    consent_decisions = consent_log if consent_log is not None else build_consent_log(resolved)
     started = time.perf_counter()
 
     async with AsyncSqliteSaver.from_conn_string(checkpoint_path(resolved)) as checkpointer:
         compiled = build_graph().compile(checkpointer=checkpointer)
         async with ToolGateway(resolved) as tools:
-            with use_context(TurnContext(settings=resolved, llm=model, tools=tools)):
+            with use_context(
+                TurnContext(
+                    settings=resolved,
+                    llm=model,
+                    tools=tools,
+                    consent_model=consent,
+                    consent_log=consent_decisions,
+                )
+            ):
                 final: dict[str, Any] = await compiled.ainvoke(
                     {
                         "session_id": session_id,

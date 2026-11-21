@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from ..config import Settings
+from ..consent import ConsentLog, ConsentModel
 from ..llm import LlmClient
 from ..mcp_client import ToolGateway
 
@@ -22,6 +23,12 @@ class TurnContext:
     settings: Settings
     llm: LlmClient
     tools: ToolGateway
+
+    # Consent classifier. Optional with a default so every existing call site
+    # that builds a TurnContext keeps working untouched, and so rule mode needs
+    # neither of them: in rule mode the gate is never called.
+    consent_model: ConsentModel | None = None
+    consent_log: ConsentLog | None = None
 
 
 _turn_context: ContextVar[TurnContext | None] = ContextVar("assistant_turn_context", default=None)

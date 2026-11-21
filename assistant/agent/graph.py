@@ -22,6 +22,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from ..consent import ConsentAction, ConsentMode, Proposal, decide_consent
 from ..llm import LlmUnavailable, Message
 from ..mcp_client import ToolTransportError
 from ..redaction import redact_loan_id, redact_session_id
@@ -53,6 +54,7 @@ _CLEARED_PENDING: dict[str, Any] = {
     "pending_action_id": None,
     "pending_loan_id": None,
     "pending_amount_cents": None,
+    "pending_installment": None,
 }
 
 
@@ -69,6 +71,11 @@ def _fresh_turn() -> dict[str, Any]:
         "completion_tokens": 0,
         "reply": "",
         "outcome": Outcome.REFUSED.value,
+        "consent_action": None,
+        "consent_decided_by": None,
+        "consent_label": None,
+        "consent_confidence": None,
+        "consent_failure": None,
     }
 
 
@@ -105,6 +112,124 @@ async def sanitize_node(state: AgentState) -> dict[str, Any]:
     }
 
 
+def _installment_label(covers: list[dict[str, Any]]) -> str:
+    """Describe which installments a prepared payment would touch.
+
+    Carried into the proposal so the classifier judges the reply against what
+    the user was actually shown, rather than against an amount alone.
+    """
+    sequences = [str(item.get("sequence")) for item in covers if item.get("sequence") is not None]
+    if not sequences:
+        return ""
+    if len(sequences) == 1:
+        return f"installment {sequences[0]}"
+    return f"installments {', '.join(sequences)}"
+
+
+async def _consent_gate(
+    state: AgentState, text: str
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Run the consent classifier, if the mode and the state call for it.
+
+    Returns the fields to record about the decision, and either the updates that
+    settle the turn or None to let the existing rule below decide.
+
+    None comes back in three cases: rule mode, where the classifier is never
+    called; shadow mode, where it is called and recorded and then deliberately
+    ignored; and a mode that is set without a classifier being configured, which
+    is a misconfiguration that must not become a more permissive path.
+    """
+    context = current_context()
+    settings = context.settings
+    mode = ConsentMode(settings.consent_mode)
+    if mode is ConsentMode.RULE:
+        return {}, None
+
+    pending_id = state.get("pending_action_id")
+    if not pending_id:
+        # Consent is only meaningful against a proposal that is on the table.
+        return {}, None
+
+    model = context.consent_model
+    if model is None:
+        logger.warning(
+            "consent mode is set but no classifier is configured; using the rule",
+            extra={"consent_mode": mode.value},
+        )
+        return {}, None
+
+    loan_id = state.get("pending_loan_id")
+    proposal = Proposal(
+        amount_cents=int(state.get("pending_amount_cents") or 0),
+        payee=f"loan {loan_id}" if loan_id else "",
+        installment=state.get("pending_installment") or "",
+        pending_action_id=pending_id,
+        loan_id=loan_id,
+    )
+    outcome = await decide_consent(
+        mode=mode,
+        reply=text,
+        proposal=proposal,
+        model=model,
+        # The same rule, from the same function, that decides on its own below.
+        rule_confirm=is_explicit_confirmation(text),
+        threshold=settings.consent_threshold,
+        timeout_seconds=settings.consent_timeout_seconds,
+        log=context.consent_log,
+        session_id=state.get("session_id"),
+    )
+    observed: dict[str, Any] = {
+        "consent_action": outcome.action.value,
+        "consent_decided_by": outcome.decided_by.value,
+        "consent_label": (
+            outcome.classification.label.value if outcome.classification is not None else None
+        ),
+        "consent_confidence": (
+            outcome.classification.confidence if outcome.classification is not None else None
+        ),
+        "consent_failure": outcome.failure.value if outcome.failure is not None else None,
+    }
+
+    if mode is ConsentMode.SHADOW:
+        return observed, None
+
+    if outcome.action is ConsentAction.ACT:
+        return observed, {
+            "intent": Intent.CONFIRMATION.value,
+            "target_loan_id": loan_id,
+            "amount_cents": state.get("pending_amount_cents"),
+        }
+
+    if outcome.action is ConsentAction.CANCEL:
+        return observed, {**_CLEARED_PENDING, "intent": Intent.CANCELLATION.value}
+
+    if outcome.action is ConsentAction.REPROPOSE:
+        # A modified amount is never paid. It becomes a fresh payment request,
+        # which means it is checked against the cap and the zero rule here, and
+        # then prepared again downstream, where the review queue sees it like
+        # any other prepared payment.
+        modified = outcome.modified_amount_cents
+        refusal = check_amount(modified, max_payment_cents=settings.max_payment_cents)
+        if refusal is not None:
+            return observed, {
+                **_CLEARED_PENDING,
+                "intent": Intent.REFUSED.value,
+                "refusal_code": refusal,
+                "amount_cents": modified,
+                "target_loan_id": loan_id,
+            }
+        return observed, {
+            **_CLEARED_PENDING,
+            "intent": Intent.PAYMENT_REQUEST.value,
+            "amount_cents": modified,
+            "target_loan_id": loan_id,
+        }
+
+    # Ask again. The pending action is deliberately NOT cleared: the proposal is
+    # still standing and the reply says so, so the user can simply confirm it.
+    return observed, {"intent": Intent.REFUSED.value, "refusal_code": "consent_unclear"}
+
+
 async def classify_node(state: AgentState) -> dict[str, Any]:
     context = current_context()
     text = state.get("sanitized", "")
@@ -126,7 +251,14 @@ async def classify_node(state: AgentState) -> dict[str, Any]:
         }
 
     if is_explicit_cancellation(text):
+        # Checked before the classifier, in every mode. An exact cancellation is
+        # a deterministic refusal and nothing a model says may override it.
         return {**updates, **_CLEARED_PENDING, "intent": Intent.CANCELLATION.value}
+
+    consent_observed, consent_decision = await _consent_gate(state, text)
+    updates.update(consent_observed)
+    if consent_decision is not None:
+        return {**updates, **consent_decision}
 
     if is_explicit_confirmation(text):
         if not state.get("pending_action_id"):
@@ -291,6 +423,9 @@ async def tool_call_node(state: AgentState) -> dict[str, Any]:
                 updates["pending_action_id"] = preview.payload.get("pending_action_id")
                 updates["pending_loan_id"] = preview.payload.get("loan_id")
                 updates["pending_amount_cents"] = preview.payload.get("amount_cents")
+                updates["pending_installment"] = _installment_label(
+                    list(preview.payload.get("covers") or [])
+                )
                 logger.info(
                     "payment prepared",
                     extra={
