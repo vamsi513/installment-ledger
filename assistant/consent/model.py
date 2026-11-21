@@ -142,7 +142,14 @@ class OpenAiConsentModel:
         except Exception as exc:
             # Logged without the prompt, which carries the user's own words, and
             # without anything derived from the key.
-            logger.warning("consent model call failed", extra={"error_type": type(exc).__name__})
+            # The type goes in the message, not only in extra: the default
+            # logging format drops extras, and "consent model call failed" with
+            # no reason is a failure nobody can act on.
+            logger.warning(
+                "consent model call failed: %s",
+                type(exc).__name__,
+                extra={"error_type": type(exc).__name__},
+            )
             raise ConsentModelError(
                 f"the consent model could not be reached ({type(exc).__name__})"
             ) from exc

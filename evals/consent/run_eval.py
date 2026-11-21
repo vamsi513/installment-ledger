@@ -64,6 +64,37 @@ STUB_WARNING = (
     "not be reported as one."
 )
 
+
+def failure_banner(records: list[dict[str, Any]]) -> list[str]:
+    """Say loudly when the classifier did not answer, and what went wrong.
+
+    A run where every call failed still produces a table full of zeroes, and a
+    table is easy to read as a result. It is not one: it measures nothing except
+    that the classifier was unreachable. The counts are already in the summary,
+    but a count in a column is not a warning, so this says it in words and names
+    the failure so it can be acted on.
+    """
+    failures = Counter(record["failure"] for record in records if record["failure"])
+    if not failures:
+        return []
+    total = len(records)
+    failed = sum(failures.values())
+    breakdown = ", ".join(f"{count} {name}" for name, count in sorted(failures.items()))
+    lines = [
+        f"!! {failed} of {total} calls did not produce a decision ({breakdown}).",
+        "!! Every one of those fell back to the existing confirmation rule.",
+    ]
+    if failed == total:
+        lines += [
+            "!!",
+            "!! NOT A MEASUREMENT. The classifier never answered, so the numbers",
+            "!! below describe an unreachable classifier and nothing else. Check",
+            "!! the logged failure above (an invalid OPENAI_API_KEY and a literal",
+            "!! '...' placeholder both show up as an auth error), then run again.",
+        ]
+    return lines
+
+
 LABELLING_NOTE = (
     "The gold labels were written and reviewed by one person. They are one "
     "person's reading of what each reply means, with no second annotator and no "
@@ -267,6 +298,11 @@ def _format(value: float | None, places: int = 3) -> str:
 def print_report(result: dict[str, Any]) -> None:
     """One split at one threshold, in full."""
     summary = result["summary"]
+    banner = failure_banner(result["records"])
+    if banner:
+        for line in banner:
+            print(line)
+        print()
     print(f"dataset   : {result['dataset']}")
     print(f"split     : {result['split']}  ({summary['rows']} rows)")
     print(f"provider  : {result['provider']}")
@@ -307,6 +343,11 @@ def print_report(result: dict[str, Any]) -> None:
 
 
 def print_sweep(result: dict[str, Any]) -> None:
+    banner = failure_banner(result["records"])
+    if banner:
+        for line in banner:
+            print(line)
+        print()
     print(f"dataset   : {result['dataset']}")
     print(f"split     : {result['split']}  ({result['rows']} rows)")
     print(f"provider  : {result['provider']}")
@@ -322,7 +363,10 @@ def print_sweep(result: dict[str, Any]) -> None:
             f"{entry['fallback_count']:>10}"
         )
     print()
-    print("Pick a threshold from this table, then run --split held_out once at it.")
+    if banner:
+        print("Do not pick a threshold from this table. Fix the failures above first.")
+    else:
+        print("Pick a threshold from this table, then run --split held_out once at it.")
     print()
     if result["provider"] == "stub":
         print(STUB_WARNING)
@@ -419,6 +463,12 @@ async def main_async(arguments: argparse.Namespace) -> int:
         path = write_results(result, arguments.out_dir)
         print()
         print(f"full results -> {path.relative_to(REPO_ROOT)}")
+
+    # A run where nothing answered is a failed run, not a run that scored zero.
+    # Exiting 0 on it is how an unreachable classifier gets mistaken for a
+    # result, by a person skimming or by a CI step checking the status.
+    if records and all(record["failure"] for record in records):
+        return 1
     return 0
 
 
