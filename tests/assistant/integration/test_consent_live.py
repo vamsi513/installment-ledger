@@ -24,7 +24,7 @@ import pytest
 from sqlalchemy import Engine, text
 
 from assistant.agent import run_turn
-from assistant.agent.state import Outcome
+from assistant.agent.state import Intent, Outcome
 from assistant.config import Settings
 from assistant.consent import (
     ConsentAction,
@@ -449,13 +449,15 @@ async def test_the_trails_record_which_path_decided_each_time(
             ConsentClassification(label=ConsentLabel.CONFIRM, confidence=0.97),
         ]
     )
+    second = 10_000
     await drive(
         settings,
         loan["id"],
         [
             f"pay {NORMAL_CENTS} cents",
-            "what does that cover?",  # unclear, asks again, proposal still live
-            VAGUE_YES,  # fallback on an error, rule refuses it
+            "hmm not sure",  # classifier says unclear, asks again, proposal lives
+            "yes",  # classifier errors, the exact rule decides, pays
+            f"pay {second} cents",  # a fresh proposal, no decision of its own
             VAGUE_YES,  # classifier confirms, pays
         ],
         model,
@@ -470,15 +472,18 @@ async def test_the_trails_record_which_path_decided_each_time(
     ]
     assert [row.action for row in rows] == [
         ConsentAction.ASK_AGAIN.value,
-        ConsentAction.ASK_AGAIN.value,
+        ConsentAction.ACT.value,
         ConsentAction.ACT.value,
     ]
+    assert rows[1].failure == "timeout" or rows[1].failure == "model_error"
     # Every row names the proposal it judged and the threshold in force.
     for row in rows:
         assert row.pending_action_id
         assert row.loan_id == loan["id"]
         assert row.threshold == THRESHOLD
-        assert row.amount_cents == NORMAL_CENTS
+    assert [row.amount_cents for row in rows] == [NORMAL_CENTS, NORMAL_CENTS, second]
+    # The two paid proposals are different ones, judged separately.
+    assert rows[1].pending_action_id != rows[2].pending_action_id
 
     # And the review queue's own trail is unchanged in shape by any of it.
     assert AuditAction.PREPARED.value in audit_actions(service, loan["id"])
@@ -555,4 +560,140 @@ async def test_a_held_action_is_still_held_in_rule_mode(
         )
 
     assert outcome.status == "rejected"
+    assert payments(engine) == before
+
+
+# --- proposal lifetime ------------------------------------------------------
+
+
+async def test_a_change_of_subject_cancels_the_pending_payment(
+    client: httpx.Client, assistant_settings: Settings, engine: Engine
+) -> None:
+    """The regression. Live mode used to pay here and rule mode never did.
+
+    The middle turn is a question, not a reply to the proposal. The classifier
+    reads it as unclear, which used to mean "ask again, proposal still live", so
+    the "yes" that followed paid a proposal the user had already moved on from.
+    It is handled as the question it is now, which cancels the payment.
+    """
+    settings = live(assistant_settings)
+    log = consent_log_for(settings)
+    loan = create_loan(client, principal_cents=120_000, installment_count=4)
+    before = payments(engine)
+
+    results = await drive(
+        settings,
+        loan["id"],
+        ["Pay 300 dollars.", "Actually, what is my balance?", "yes"],
+        ScriptedConsentModel([ConsentClassification(label=ConsentLabel.UNCLEAR, confidence=0.2)]),
+        log,
+        session_id="live-topic-change",
+    )
+
+    # The question is answered as a question.
+    assert results[1].intent == Intent.READ_QUESTION.value  # type: ignore[attr-defined]
+    assert "get_loan_summary" in results[1].tool_calls  # type: ignore[attr-defined]
+    # And the proposal is gone, so there is nothing for the "yes" to confirm.
+    assert results[1].has_pending_action is False  # type: ignore[attr-defined]
+    assert results[2].refusal_code == "nothing_to_confirm"  # type: ignore[attr-defined]
+    assert payments(engine) == before
+
+
+async def test_a_fresh_payment_request_reprepares(
+    client: httpx.Client, assistant_settings: Settings, engine: Engine
+) -> None:
+    """A new request while a proposal is pending is a request, not a reply.
+
+    Same as rule mode: it prepares again and pays nothing by itself.
+    """
+    settings = live(assistant_settings)
+    log = consent_log_for(settings)
+    loan = create_loan(client, principal_cents=120_000, installment_count=4)
+    before = payments(engine)
+
+    results = await drive(
+        settings,
+        loan["id"],
+        ["Pay 100 dollars.", "Pay 100 dollars."],
+        ScriptedConsentModel([ConsentClassification(label=ConsentLabel.UNCLEAR, confidence=0.2)]),
+        log,
+        session_id="live-repeat-request",
+    )
+
+    assert results[1].intent == Intent.PAYMENT_REQUEST.value  # type: ignore[attr-defined]
+    assert "prepare_payment" in results[1].tool_calls  # type: ignore[attr-defined]
+    assert "confirm_payment" not in results[1].tool_calls  # type: ignore[attr-defined]
+    assert results[1].has_pending_action is True  # type: ignore[attr-defined]
+    assert payments(engine) == before
+
+
+async def test_a_vague_reply_about_the_proposal_still_asks_again(
+    client: httpx.Client, assistant_settings: Settings, engine: Engine
+) -> None:
+    """The case the ask again path is actually for.
+
+    Nothing recognises "hmm not sure" as a question or a request, so it is a
+    vague reply about the proposal: ask again, pay nothing, and leave the
+    proposal standing so a following "yes" can still confirm it.
+    """
+    settings = live(assistant_settings)
+    log = consent_log_for(settings)
+    loan = create_loan(client, principal_cents=120_000, installment_count=4)
+    before = payments(engine)
+
+    # Two stages, because the claim is about what had not happened yet.
+    session = "live-vague-reply"
+    model = ScriptedConsentModel(
+        [
+            ConsentClassification(label=ConsentLabel.UNCLEAR, confidence=0.2),
+            ConsentClassification(label=ConsentLabel.CONFIRM, confidence=0.97),
+        ]
+    )
+    asked = await drive(
+        settings,
+        loan["id"],
+        ["Pay 300 dollars.", "hmm not sure"],
+        model,
+        log,
+        session_id=session,
+    )
+
+    assert asked[1].refusal_code == "consent_unclear"  # type: ignore[attr-defined]
+    assert asked[1].has_pending_action is True  # type: ignore[attr-defined]
+    assert payments(engine) == before
+
+    # The proposal survived a reply that was about it, so a yes still works.
+    agreed = await drive(settings, loan["id"], ["yes"], model, log, session_id=session)
+    assert agreed[0].outcome == Outcome.APPLIED.value  # type: ignore[attr-defined]
+    assert payments(engine) == before + 1
+    assert paid_cents(engine, loan["id"]) == 30_000
+
+
+async def test_an_out_of_scope_request_still_cancels_the_proposal(
+    client: httpx.Client, assistant_settings: Settings, engine: Engine
+) -> None:
+    """A recognised refusal is a change of subject, not a vague reply.
+
+    This is the other side of the fix: only a message nothing recognised is
+    treated as a reply about the proposal. Something the scope patterns catch
+    cancels the payment, as it does in rule mode.
+    """
+    settings = live(assistant_settings)
+    log = consent_log_for(settings)
+    loan = create_loan(client, principal_cents=120_000, installment_count=4)
+    before = payments(engine)
+
+    results = await drive(
+        settings,
+        loan["id"],
+        ["Pay 300 dollars.", "Should I refinance this loan?", "yes"],
+        ScriptedConsentModel([ConsentClassification(label=ConsentLabel.UNCLEAR, confidence=0.2)]),
+        log,
+        session_id="live-out-of-scope",
+    )
+
+    assert results[1].intent == Intent.OUT_OF_SCOPE.value  # type: ignore[attr-defined]
+    assert results[1].refusal_code == "financial_advice"  # type: ignore[attr-defined]
+    assert results[1].has_pending_action is False  # type: ignore[attr-defined]
+    assert results[2].refusal_code == "nothing_to_confirm"  # type: ignore[attr-defined]
     assert payments(engine) == before
