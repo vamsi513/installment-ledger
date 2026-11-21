@@ -22,7 +22,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from ..consent import ConsentAction, ConsentMode, Proposal, decide_consent
+from ..consent import ConsentAction, ConsentMode, DecidedBy, Proposal, decide_consent
 from ..llm import LlmUnavailable, Message
 from ..mcp_client import ToolTransportError
 from ..redaction import redact_loan_id, redact_session_id
@@ -225,13 +225,52 @@ async def _consent_gate(
             "target_loan_id": loan_id,
         }
 
-    # Ask again. The pending action is deliberately NOT cleared: the proposal is
-    # still standing and the reply says so, so the user can simply confirm it.
-    return observed, {"intent": Intent.REFUSED.value, "refusal_code": "consent_unclear"}
+    # Ask again, decided later. Returning None here on purpose: the message has
+    # not been classified yet, and answering for the user before anything has
+    # looked at it is what let a proposal outlive a change of subject. The
+    # classification pipeline gets the message next, and classify_node only
+    # falls back to asking again if the pipeline made nothing of it either.
+    return observed, None
+
+
+#: What the pipeline returns when it had nothing to make of a message: the
+#: deterministic scope patterns did not match and the model could not place it
+#: as a question or a payment request either. Any other refusal code means
+#: something specific was recognised and refused, and that still cancels a
+#: pending payment exactly as it does in rule mode.
+_NOTHING_RECOGNISED = (Intent.OUT_OF_SCOPE.value, "generic")
+
+
+def _should_ask_again(consent_observed: dict[str, Any], result: dict[str, Any]) -> bool:
+    """True when a vague reply should leave the proposal standing.
+
+    Three things are required, and the first two are about who decided.
+
+    The CLASSIFIER has to be the one that asked again, which means live mode and
+    means it read the message as unclear or as a confirmation it was not sure
+    enough about. A shadow mode row cannot reach here, because in shadow mode
+    the existing rule decides and nothing the classifier says may change the
+    outcome. Neither can a fallback row: when the classifier could not be used,
+    the existing rule decides, and under that rule a message that is not a
+    confirmation goes to the pipeline and cancels the pending payment.
+
+    And the classification pipeline has to have made nothing of the message
+    either. If it did make something of it, that intent wins: a question, a
+    different payment request or a change of subject is handled as what it is
+    and clears the pending action, which is the behaviour rule mode has always
+    had and which live mode used to lose here.
+    """
+    if consent_observed.get("consent_action") != ConsentAction.ASK_AGAIN.value:
+        return False
+    if consent_observed.get("consent_decided_by") != DecidedBy.CLASSIFIER.value:
+        return False
+    return (
+        str(result.get("intent")),
+        str(result.get("refusal_code")),
+    ) == _NOTHING_RECOGNISED
 
 
 async def classify_node(state: AgentState) -> dict[str, Any]:
-    context = current_context()
     text = state.get("sanitized", "")
     updates = _fresh_turn()
 
@@ -259,6 +298,37 @@ async def classify_node(state: AgentState) -> dict[str, Any]:
     updates.update(consent_observed)
     if consent_decision is not None:
         return {**updates, **consent_decision}
+
+    result = await _classify_intent(state, text, updates)
+
+    # A reply the consent classifier could not read is not, on its own, a reason
+    # to answer for the user. The pipeline above has just had its turn with the
+    # same message: if it made something of it, that intent wins and the pending
+    # action is cleared exactly as in rule mode. Only when the pipeline also had
+    # nothing to make of it is the message treated as a vague reply about the
+    # proposal, which asks again and leaves the proposal standing.
+    if _should_ask_again(consent_observed, result):
+        # The pending keys are deliberately not returned, so the checkpointed
+        # pending action survives. Everything else the pipeline recorded,
+        # including the model call accounting, is kept.
+        asked = {key: value for key, value in result.items() if key not in _CLEARED_PENDING}
+        asked["intent"] = Intent.REFUSED.value
+        asked["refusal_code"] = "consent_unclear"
+        return asked
+
+    return result
+
+
+async def _classify_intent(state: AgentState, text: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """The classification pipeline, unchanged and in one place.
+
+    Split out of ``classify_node`` so live mode can run it for a message the
+    consent classifier could not read as a reply, instead of answering for it.
+    Every branch here behaves exactly as it did when it was inline, including
+    clearing the pending action for every intent except a confirmation, which
+    is what makes a change of subject cancel a pending payment.
+    """
+    context = current_context()
 
     if is_explicit_confirmation(text):
         if not state.get("pending_action_id"):
