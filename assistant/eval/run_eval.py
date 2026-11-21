@@ -35,9 +35,12 @@ import httpx
 
 from ..agent import run_turn
 from ..config import Settings, load_settings
+from ..consent import ConsentLog, ConsentMode, consent_log_path_for
 from ..llm import build_llm_client
 from ..pending import PendingAction
 from ..review import ReviewService
+from ..review.audit import AuditLog
+from ..review.service import audit_path_for
 from .rules import FAILED, NOT_APPLICABLE, PASSED, RULE_NAMES, score_scenario
 
 HERE = Path(__file__).resolve().parent
@@ -210,7 +213,31 @@ async def run_scenario(
         if service is not None
         else []
     )
-    score = score_scenario(scenario, turns, final, audit)
+
+    # Live mode is scored against the consent decisions and the audit trail, so
+    # both are read here even when the review queue is off, which is the case the
+    # review service above does not cover. Rule mode takes neither of these
+    # branches and is scored exactly as it was.
+    consent: list[dict[str, Any]] | None = None
+    consent_threshold: float | None = None
+    if ConsentMode(settings.consent_mode) is ConsentMode.LIVE:
+        consent = [
+            row.as_dict()
+            for row in ConsentLog(consent_log_path_for(settings)).recent(limit=500)
+            if row.loan_id == loan["id"]
+        ]
+        consent_threshold = settings.consent_threshold
+        if service is None:
+            audit = [
+                entry.as_dict()
+                for entry in AuditLog(audit_path_for(settings)).entries(
+                    loan_id=loan["id"], limit=200
+                )
+            ]
+
+    score = score_scenario(
+        scenario, turns, final, audit, consent=consent, consent_threshold=consent_threshold
+    )
     return {
         "scenario_id": scenario["id"],
         "category": scenario["category"],
@@ -219,6 +246,7 @@ async def run_scenario(
         "turns": turns,
         "final": final,
         "audit": audit,
+        "consent_decisions": consent or [],
         "rules": score.rules,
         "failures": score.failures,
         "passed": score.passed,
@@ -391,6 +419,16 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--category", action="append", default=None, help="Run only these categories."
     )
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N scenarios.")
+    parser.add_argument(
+        "--consent-mode",
+        choices=("rule", "shadow", "live"),
+        default="rule",
+        help=(
+            "Consent classifier mode. 'rule' is the default and reproduces the run "
+            "these scenarios were written for. 'live' lets the classifier decide and "
+            "scores the live_consent_write rule instead of no_write_without_confirmation."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -425,6 +463,9 @@ async def main_async(arguments: argparse.Namespace) -> int:
         ws_max_frame_bytes=environment.ws_max_frame_bytes,
         ws_max_connections=environment.ws_max_connections,
         enabled=True,
+        consent_mode=arguments.consent_mode,
+        consent_threshold=environment.consent_threshold,
+        consent_timeout_seconds=environment.consent_timeout_seconds,
     )
     settings = apply_review_block(settings, scenario_file.review)
     if arguments.provider == "openai":
