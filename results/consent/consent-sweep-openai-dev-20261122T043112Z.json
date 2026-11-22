@@ -1,0 +1,384 @@
+{
+  "dataset": "evals/consent/replies.jsonl",
+  "git_sha": "c147ea07feda728b07e096460b2c7da44a580987",
+  "labelling": "The gold labels were written and reviewed by one person. They are one person's reading of what each reply means, with no second annotator and no agreement measurement, so the labels carry that person's assumptions.",
+  "model": "gpt-4o-mini",
+  "provider": "openai",
+  "ran_at": "2026-11-22T04:31:12.630517+00:00",
+  "records": [
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "confirm",
+      "id": "confirm-bare-yes",
+      "modified_amount_cents": null,
+      "predicted_label": "confirm",
+      "reply": "yes",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "confirm",
+      "id": "confirm-go-ahead",
+      "modified_amount_cents": null,
+      "predicted_label": "confirm",
+      "reply": "yeah that's right, go ahead",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "decline",
+      "id": "decline-not-now",
+      "modified_amount_cents": null,
+      "predicted_label": "decline",
+      "reply": "actually not right now, I'll do it next week",
+      "split": "dev"
+    },
+    {
+      "confidence": 1.0,
+      "failure": null,
+      "gold_label": "decline",
+      "id": "decline-wrong-loan",
+      "modified_amount_cents": null,
+      "predicted_label": "decline",
+      "reply": "no, that's the wrong loan",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "modify",
+      "id": "modify-lower-dollars",
+      "modified_amount_cents": 10000,
+      "predicted_label": "modify",
+      "reply": "make it 100 dollars instead",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "modify",
+      "id": "modify-yes-but",
+      "modified_amount_cents": 5000,
+      "predicted_label": "modify",
+      "reply": "yes but only 50 dollars",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.8,
+      "failure": null,
+      "gold_label": "unclear",
+      "id": "unclear-question",
+      "modified_amount_cents": null,
+      "predicted_label": "unclear",
+      "reply": "does that clear the whole installment?",
+      "split": "dev"
+    },
+    {
+      "confidence": 0.9,
+      "failure": null,
+      "gold_label": "unclear",
+      "id": "unclear-thanks-only",
+      "modified_amount_cents": null,
+      "predicted_label": "unclear",
+      "reply": "thanks",
+      "split": "dev"
+    }
+  ],
+  "rows": 8,
+  "split": "dev",
+  "sweep": [
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.5,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.55,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.6,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.65,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.7,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.75,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.8,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.85,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 0,
+      "confirm_false_positive": 0,
+      "confirm_precision": 1.0,
+      "confirm_recall": 1.0,
+      "confirm_true_positive": 2,
+      "confusion_matrix": {
+        "confirm": {
+          "confirm": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.9,
+      "timeout_count": 0,
+      "unclear_count": 2,
+      "unclear_rate": 0.25
+    },
+    {
+      "confirm_false_negative": 2,
+      "confirm_false_positive": 0,
+      "confirm_precision": null,
+      "confirm_recall": 0.0,
+      "confirm_true_positive": 0,
+      "confusion_matrix": {
+        "confirm": {
+          "unclear": 2
+        },
+        "decline": {
+          "decline": 2
+        },
+        "modify": {
+          "modify": 2
+        },
+        "unclear": {
+          "unclear": 2
+        }
+      },
+      "fallback_count": 0,
+      "invalid_output_count": 0,
+      "model_error_count": 0,
+      "rows": 8,
+      "threshold": 0.95,
+      "timeout_count": 0,
+      "unclear_count": 4,
+      "unclear_rate": 0.5
+    }
+  ]
+}
