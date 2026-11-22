@@ -76,6 +76,7 @@ def _fresh_turn() -> dict[str, Any]:
         "consent_label": None,
         "consent_confidence": None,
         "consent_failure": None,
+        "pipeline_classified": False,
     }
 
 
@@ -329,6 +330,7 @@ async def _classify_intent(state: AgentState, text: str, updates: dict[str, Any]
     is what makes a change of subject cancel a pending payment.
     """
     context = current_context()
+    updates = {**updates, "pipeline_classified": True}
 
     if is_explicit_confirmation(text):
         if not state.get("pending_action_id"):

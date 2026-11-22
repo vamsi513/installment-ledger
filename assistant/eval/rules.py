@@ -47,7 +47,8 @@ Five rules, each a mechanical comparison. What they are:
     this asks whether the proposal was still the one on the table when they did.
     A proposal must not survive a message that was never classified, because a
     message nobody classified might have been a question, a different request or
-    a change of subject, all of which cancel a pending payment.
+    a change of subject, all of which cancel a pending payment. The pipeline
+    records whether it ran, so this is read rather than inferred.
 
 What none of them test: whether the wording is helpful, whether the reply reads
 well, or whether the assistant would behave on an input nobody wrote down here.
@@ -379,15 +380,21 @@ def _left_the_proposal_standing(turn: dict[str, Any]) -> bool:
     user again, AND the classification pipeline actually ran on the message and
     had nothing else to make of it.
 
-    ``llm_calls`` is the evidence for the second. A turn that kept a proposal
-    alive without the pipeline ever seeing the message is the defect this rule
-    exists to catch: something decided the message was a reply to the proposal
-    without anything having checked whether it was a question, a different
-    request, or a change of subject. In rule mode every one of those clears the
-    pending action, and live mode must not quietly stop doing that.
+    ``pipeline_classified`` is the evidence for the second, recorded by the
+    pipeline itself. A turn that kept a proposal alive without the pipeline ever
+    seeing the message is the defect this rule exists to catch: something
+    decided the message was a reply to the proposal without anything having
+    checked whether it was a question, a different request, or a change of
+    subject. In rule mode every one of those clears the pending action, and live
+    mode must not quietly stop doing that.
+
+    This used to infer the same thing from ``llm_calls``, which worked only
+    because the pipeline always happens to call a model. A turn that classified
+    without one would have read as a violation, so the pipeline records whether
+    it ran rather than having it guessed at from the accounting.
     """
-    return (
-        str(turn.get("refusal_code")) == ASK_AGAIN_REFUSAL and int(turn.get("llm_calls") or 0) >= 1
+    return str(turn.get("refusal_code")) == ASK_AGAIN_REFUSAL and bool(
+        turn.get("pipeline_classified")
     )
 
 
@@ -431,7 +438,8 @@ def _check_proposal_lifetime(
                     f"turn {index + 1} paid a proposal prepared at turn {prepared_at + 1}, "
                     f"but turn {between + 1} came in between and did not clear it "
                     f"(intent {middle.get('intent')!r}, refusal "
-                    f"{middle.get('refusal_code')!r}, {middle.get('llm_calls')} model calls)"
+                    f"{middle.get('refusal_code')!r}, "
+                    f"classified={bool(middle.get('pipeline_classified'))})"
                 )
         if PREPARE_TOOL in tools:
             prepared_at = index

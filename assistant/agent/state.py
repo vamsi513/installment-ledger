@@ -63,6 +63,12 @@ class AgentState(TypedDict, total=False):
     consent_confidence: float | None
     consent_failure: str | None
 
+    #: True when the classification pipeline ran on this turn's message. Set
+    #: explicitly rather than inferred from the model call count, because the
+    #: proposal lifetime rule turns on it: a turn that leaves a pending payment
+    #: standing has to be one where something actually looked at the message.
+    pipeline_classified: bool
+
     # Per turn results
     tool_calls: list[str]
     tool_payload: dict[str, Any]

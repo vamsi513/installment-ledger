@@ -1102,11 +1102,12 @@ whether the thing that was authorised was still the proposal on the table. For
 every turn that wrote, the proposal it paid was prepared earlier and every turn
 in between legitimately left it standing, which means the turn asked the user
 again **and** the classification pipeline actually ran on the message and had
-nothing else to make of it. The second half is the one that matters, and
-`llm_calls` is the evidence for it: a turn that keeps a proposal alive without
-the pipeline ever seeing the message is a turn where something decided the
-message was a reply without anything checking whether it was a question, a
-different request, or a change of subject.
+nothing else to make of it. The second half is the one that matters: a turn that
+keeps a proposal alive without the pipeline ever seeing the message is a turn
+where something decided the message was a reply without anything checking
+whether it was a question, a different request, or a change of subject. The
+pipeline records whether it ran, in `pipeline_classified`, so the rule reads it
+rather than inferring it from the model call count.
 
 Run the scenarios in either mode. The default is unchanged:
 
@@ -1156,7 +1157,7 @@ reported 13 pass, 2 fail, 41 not applicable, and named the cause:
 ```
 proposal_lifetime: turn 3 paid a proposal prepared at turn 1, but turn 2 came
 in between and did not clear it (intent 'refused', refusal 'consent_unclear',
-0 model calls)
+classified=False)
 ```
 
 After the fix it reports 14 pass, 0 fail, 42 not applicable. It caught both

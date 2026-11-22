@@ -43,6 +43,8 @@ class TurnResult:
     completion_tokens: int = 0
     latency_ms: float = 0.0
     has_pending_action: bool = False
+    #: Whether the classification pipeline ran on this turn's message.
+    pipeline_classified: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -106,6 +108,7 @@ async def run_turn(
         completion_tokens=int(final.get("completion_tokens") or 0),
         latency_ms=round((time.perf_counter() - started) * 1000, 2),
         has_pending_action=bool(final.get("pending_action_id")),
+        pipeline_classified=bool(final.get("pipeline_classified")),
     )
     logger.info(
         "turn complete",

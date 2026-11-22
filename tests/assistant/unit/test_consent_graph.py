@@ -374,3 +374,51 @@ async def test_consent_fields_do_not_leak_into_a_later_turn(tmp_path: Path) -> N
     assert second["consent_label"] is None
     assert second["consent_action"] is None
     assert second["consent_decided_by"] is None
+
+
+# --- the pipeline marker ----------------------------------------------------
+
+
+async def test_the_pipeline_records_that_it_ran(tmp_path: Path) -> None:
+    """The proposal lifetime rule turns on this, so it is set by the pipeline
+    rather than inferred from the model call count."""
+    result = await classify(
+        pending_state("what does that cover?"),
+        settings_for(tmp_path, mode="live"),
+        consent_model=ScriptedConsentModel(
+            [ConsentClassification(label=ConsentLabel.UNCLEAR, confidence=0.2)]
+        ),
+    )
+    assert result["refusal_code"] == "consent_unclear"
+    assert result["pipeline_classified"] is True
+
+
+async def test_a_gate_decision_does_not_claim_the_pipeline_ran(tmp_path: Path) -> None:
+    """A confirm is settled by the gate, so the pipeline never sees the message
+    and must not be recorded as having classified it."""
+    result = await classify(
+        pending_state("sure that sounds fine"),
+        settings_for(tmp_path, mode="live"),
+        consent_model=ScriptedConsentModel([confirm(0.99)]),
+    )
+    assert result["intent"] == Intent.CONFIRMATION.value
+    assert result["pipeline_classified"] is False
+
+
+async def test_rule_mode_always_records_that_the_pipeline_ran(tmp_path: Path) -> None:
+    result = await classify(
+        pending_state("sure that sounds fine"),
+        settings_for(tmp_path, mode="rule"),
+        consent_model=StubConsentModel(),
+    )
+    assert result["pipeline_classified"] is True
+
+
+async def test_an_exact_cancellation_never_reaches_the_pipeline(tmp_path: Path) -> None:
+    result = await classify(
+        pending_state("cancel"),
+        settings_for(tmp_path, mode="live"),
+        consent_model=ScriptedConsentModel([confirm(0.99)]),
+    )
+    assert result["intent"] == Intent.CANCELLATION.value
+    assert result["pipeline_classified"] is False
