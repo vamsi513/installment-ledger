@@ -211,3 +211,33 @@ def test_a_run_where_nothing_answered_says_it_is_not_a_measurement() -> None:
     assert "2 of 2 calls did not produce a decision" in text
     assert "NOT A MEASUREMENT" in text
     assert "OPENAI_API_KEY" in text
+
+
+# --- a failed run must not leave a committable file -------------------------
+
+
+def test_a_normal_run_is_written_under_the_tracked_name(tmp_path: Path) -> None:
+    result = {"provider": "openai", "split": "dev", "summary": {}}
+    path = run_eval.write_results(result, tmp_path)
+    assert path.name.startswith("consent-eval-openai-dev-")
+    assert json.loads(path.read_text(encoding="utf-8"))["provider"] == "openai"
+
+
+def test_a_run_where_nothing_answered_is_written_under_a_failed_name(tmp_path: Path) -> None:
+    """results/consent/.gitignore only un-ignores 'consent-*-openai-*', so a
+    file named this way cannot be committed as though it were a measurement."""
+    result = {"provider": "openai", "split": "dev", "sweep": []}
+    path = run_eval.write_results(result, tmp_path, failed=True)
+    assert path.name.startswith("failed-consent-sweep-openai-dev-")
+    assert not path.name.startswith("consent-")
+
+
+def test_the_failed_name_is_the_normal_one_with_a_prefix(tmp_path: Path) -> None:
+    """So the two are recognisable as the same run, and only one is trackable."""
+    result = {"provider": "openai", "split": "held_out", "summary": {}}
+    good = run_eval.write_results(result, tmp_path)
+    bad = run_eval.write_results(result, tmp_path, failed=True)
+    assert good.name.startswith("consent-eval-openai-held_out-")
+    assert bad.name == f"failed-{good.name}" or bad.name.startswith(
+        "failed-consent-eval-openai-held_out-"
+    )

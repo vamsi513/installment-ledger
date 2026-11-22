@@ -374,11 +374,21 @@ def print_sweep(result: dict[str, Any]) -> None:
     print(LABELLING_NOTE)
 
 
-def write_results(result: dict[str, Any], out_dir: Path) -> Path:
+def write_results(result: dict[str, Any], out_dir: Path, *, failed: bool = False) -> Path:
+    """Write the run to a file, naming a failed run so it cannot be mistaken.
+
+    A run where nothing answered is kept, because the failure record is the
+    useful part of it, but it is written under a ``failed-`` prefix. The
+    .gitignore in results/consent only un-ignores ``consent-*-openai-*``, so a
+    file named this way stays untracked and cannot be committed by accident as
+    though it were a measurement. That is not a hypothetical: it is the second
+    time a run with an unusable key has left a committable looking file here.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     kind = "sweep" if "sweep" in result else "eval"
-    path = out_dir / f"consent-{kind}-{result['provider']}-{result['split']}-{stamp}.json"
+    prefix = "failed-consent" if failed else "consent"
+    path = out_dir / f"{prefix}-{kind}-{result['provider']}-{result['split']}-{stamp}.json"
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
@@ -459,17 +469,21 @@ async def main_async(arguments: argparse.Namespace) -> int:
         result = {**common, "summary": score(records, threshold=arguments.threshold)}
         print_report(result)
 
-    if not arguments.no_write:
-        path = write_results(result, arguments.out_dir)
-        print()
-        print(f"full results -> {path.relative_to(REPO_ROOT)}")
-
     # A run where nothing answered is a failed run, not a run that scored zero.
     # Exiting 0 on it is how an unreachable classifier gets mistaken for a
     # result, by a person skimming or by a CI step checking the status.
-    if records and all(record["failure"] for record in records):
-        return 1
-    return 0
+    nothing_answered = bool(records) and all(record["failure"] for record in records)
+
+    if not arguments.no_write:
+        path = write_results(result, arguments.out_dir, failed=nothing_answered)
+        print()
+        if nothing_answered:
+            print(f"failure record -> {path.relative_to(REPO_ROOT)}")
+            print("Named 'failed-' and left untracked, because it is not a result.")
+        else:
+            print(f"full results -> {path.relative_to(REPO_ROOT)}")
+
+    return 1 if nothing_answered else 0
 
 
 def main(argv: list[str] | None = None) -> int:
