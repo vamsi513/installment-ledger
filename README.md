@@ -1193,12 +1193,20 @@ holds user text and belongs wherever the review audit database belongs.
  "installment": "installment 3"}, "reply": "yes", "gold_label": "confirm", "split": "dev"}
 ```
 
-**The gold labels were written and reviewed by one person.** There is no second
-annotator and no agreement measurement, so the labels carry one person's
-reading of what each reply means.
+The dataset is **80 synthetic replies with gold labels (50 `dev`, 30 `held_out`)**.
+Every proposal and every reply in it is invented; no real conversation is in there.
 
-What is committed is a small set of example rows to fix the format, not a
-dataset. The target is about 80 rows, roughly 50 `dev` and 30 `held_out`.
+The labelling convention is recorded in `//` comment lines at the top of the file
+itself, so it can be checked against the rows rather than taken on trust. The
+part that matters: **only a reply that plainly authorises this exact payment now
+is a `confirm`**, and a hedged or conditional yes never is. "yes but next week"
+is `unclear`, because it agrees in principle and not to this payment now; "not
+right now" is a `decline`, because it refuses it outright. There is no second
+annotator and no agreement measurement.
+
+Both splits carry the hard cases on purpose: hesitant and conditional agreement,
+self corrections, agreement about a different payment, typos, all caps, emoji
+only replies, off topic text, and fee questions.
 
 Check the file before running anything against it:
 

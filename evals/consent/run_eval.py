@@ -96,9 +96,10 @@ def failure_banner(records: list[dict[str, Any]]) -> list[str]:
 
 
 LABELLING_NOTE = (
-    "The gold labels were written and reviewed by one person. They are one "
-    "person's reading of what each reply means, with no second annotator and no "
-    "agreement measurement, so the labels carry that person's assumptions."
+    "The gold labels follow the convention recorded at the top of replies.jsonl: "
+    "only a reply that plainly authorises this exact payment now is a confirm, and "
+    "a hedged or conditional yes never is. They are one reading of what each reply "
+    "means, with no second annotator and no agreement measurement."
 )
 
 
